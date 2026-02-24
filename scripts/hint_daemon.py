@@ -20,7 +20,7 @@ Backends: ollama, claude, copilot, openai
 Post-mortem: auto-drafted commit messages on git commit (uses hint_model_chain)
 """
 
-import os, sys, time, json, subprocess, re, urllib.request, urllib.error, threading
+import os, sys, time, json, subprocess, re, urllib.request, urllib.error, threading, signal
 from pathlib import Path
 from collections import Counter, deque
 from datetime import datetime
@@ -63,6 +63,19 @@ RULE_COOLDOWN    = 120
 OLLAMA_TIMEOUT   = 90
 CTX_MAX          = 200    # max lines kept in unified_context.jsonl
 CTX_INJECT       = 30     # last N unified context entries injected into prompts
+
+def _parse_jsonl_lines(lines):
+    """Parse a list of raw JSONL strings, silently skipping malformed lines."""
+    out = []
+    for l in lines:
+        l = l.strip()
+        if not l:
+            continue
+        try:
+            out.append(json.loads(l))
+        except Exception:
+            pass
+    return out
 
 # Add repo root to path so we can import backends/ and kb_engine
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -725,7 +738,7 @@ def build_tip_prompt(query):
     try:
         if CMD_LOG.exists():
             lines = CMD_LOG.read_text().strip().splitlines()[-5:]
-            recent = [json.loads(l) for l in lines if l.strip()]
+            recent = _parse_jsonl_lines(lines)
             if recent:
                 cwd = recent[-1].get("cwd", "~")
                 recent_cmds_str = "\n".join(f"  {c.get('cmd', '')}" for c in recent)
@@ -742,7 +755,7 @@ def build_tip_prompt(query):
         try:
             if CMD_LOG.exists():
                 all_lines = CMD_LOG.read_text().strip().splitlines()
-                kb_recent = [json.loads(l) for l in all_lines[-20:] if l.strip()]
+                kb_recent = _parse_jsonl_lines(all_lines[-20:])
                 kb_ctx = _KB_ENGINE.get_detail_context(kb_recent, n=3)
         except Exception:
             pass
@@ -967,6 +980,12 @@ def run():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     LOCK_FILE.write_text(str(os.getpid()))
 
+    # Clean up PID file on SIGTERM (pkill, system shutdown, etc.)
+    def _handle_sigterm(*_):
+        LOCK_FILE.unlink(missing_ok=True)
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
     _load_config()
     _probe_backends()
 
@@ -1017,8 +1036,8 @@ def run():
             try:
                 all_lines = CMD_LOG.read_text().strip().splitlines()
                 total_count = len(all_lines)
-                recent    = [json.loads(l) for l in all_lines[-WINDOW:]        if l.strip()]
-                all_recent = [json.loads(l) for l in all_lines[-ADVISOR_WINDOW:] if l.strip()]
+                recent    = _parse_jsonl_lines(all_lines[-WINDOW:])
+                all_recent = _parse_jsonl_lines(all_lines[-ADVISOR_WINDOW:])
             except Exception:
                 time.sleep(POLL_INTERVAL)
                 continue
@@ -1063,8 +1082,7 @@ def run():
                     if (_post_mortem_thread is None or not _post_mortem_thread.is_alive()):
                         for c in new_cmds[-5:]:
                             if _is_git_commit(c.get("cmd", "")) and current_count != _last_post_mortem_cmd:
-                                pm_cmds = [json.loads(l) for l in all_lines[-_POST_MORTEM_WINDOW:]
-                                           if l.strip()]
+                                pm_cmds = _parse_jsonl_lines(all_lines[-_POST_MORTEM_WINDOW:])
                                 def _run_pm(r=pm_cmds, d=cwd):
                                     run_post_mortem(r, d)
                                 _post_mortem_thread = threading.Thread(target=_run_pm, daemon=True)

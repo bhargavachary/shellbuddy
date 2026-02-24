@@ -881,8 +881,23 @@ elif grep -q "$ZSHRC_MARKER" "$ZSHRC" 2>/dev/null; then
     ok "$(basename "$ZSHRC") already has shellbuddy hooks"
     if ask "Update shellbuddy block in $(basename "$ZSHRC")? (replaces existing block)"; then
         backup_file "$ZSHRC"
-        sed -i '' '/# ── shellbuddy/,/^# ── [^s]/{ /# ── [^s]/!d; }' "$ZSHRC" 2>/dev/null || true
-        sed -i '' '/# ── shellbuddy/d' "$ZSHRC" 2>/dev/null || true
+        # Remove ALL existing shellbuddy blocks (handles duplicates and EOF-terminated blocks)
+        python3 - "$ZSHRC" << 'PYEOF'
+import sys, re
+path = sys.argv[1]
+text = open(path).read()
+# Remove every block from '# ── shellbuddy' to just before the next '# ── ' section
+# or to EOF if it's the last block
+text = re.sub(r'\n# ── shellbuddy ─+.*?(?=\n# ── (?!shellbuddy)|\Z)', '', text, flags=re.DOTALL)
+# Remove any leftover standalone shellbuddy marker lines
+text = re.sub(r'\n# ── shellbuddy[^\n]*', '', text)
+# Remove leftover SHELLBUDDY_DIR export lines
+text = re.sub(r'\nexport SHELLBUDDY_DIR=[^\n]*', '', text)
+# Collapse 3+ consecutive blank lines to 1
+text = re.sub(r'\n{3,}', '\n\n', text)
+open(path, 'w').write(text)
+PYEOF
+        ok "Removed existing shellbuddy block(s) from $(basename "$ZSHRC")"
     else
         ok "Kept existing shellbuddy block"
         SKIP_ZSHRC=true

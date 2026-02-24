@@ -46,9 +46,9 @@ fi
 
 # Terminal width
 COLS=$(tput cols 2>/dev/null || echo 80)
-# Logo column — logo starts this many chars from the left
-# Logo lines are ~46 chars wide; place them at COLS-48
-LOGO_COL=$(( COLS - 48 ))
+# Logo is 46 chars wide; anchor its left edge at COLS-46-2 (2-char right margin)
+LOGO_WIDTH=46
+LOGO_COL=$(( COLS - LOGO_WIDTH - 2 ))
 (( LOGO_COL < 30 )) && LOGO_COL=30
 
 # Print one line with hint on left, logo on right
@@ -58,9 +58,11 @@ _print_with_logo() {
     # clamp hint so it never overlaps logo
     local max_hint=$(( LOGO_COL - 4 ))
     (( ${#hint} > max_hint )) && hint="${hint:0:$max_hint}"
+    # pad from end-of-hint to LOGO_COL (accounting for the 2-space indent)
     local pad=$(( LOGO_COL - ${#hint} - 2 ))
     (( pad < 1 )) && pad=1
-    printf "${hcol}  %s${C_RESET}%${pad}s${lcol}%s${C_RESET}\n" "$hint" "" "$logo"
+    # left-pad logo to LOGO_WIDTH so all lines align at the right edge
+    printf "${hcol}  %s${C_RESET}%${pad}s${lcol}%-${LOGO_WIDTH}s${C_RESET}\n" "$hint" "" "$logo"
 }
 
 # Process line by line
@@ -85,14 +87,14 @@ while IFS=$'\t' read -r f1 f2 f3 f4 f5; do
         if [[ "$_hint" == IDLE_TIP$'\t'* ]]; then
             # Print logo-only line (no hint), then idle tip below
             _pad=$(( LOGO_COL - 2 ))
-            printf "  %${_pad}s${C_MAGENTA}%s${C_RESET}\n" "" "$_logo"
+            printf "  %${_pad}s${C_MAGENTA}%-${LOGO_WIDTH}s${C_RESET}\n" "" "$_logo"
             _tip_rest="${_hint#IDLE_TIP$'\t'}"
             _tip_cmd="${_tip_rest%%$'\t'*}"
             _tip_desc="${_tip_rest#*$'\t'}"
             printf "${C_CYAN}  %-28s${C_RESET}${C_WHITE_DIM}%s${C_RESET}\n" "$_tip_cmd" "$_tip_desc"
         elif [[ "$_hint" == IDLE_LABEL$'\t'* ]]; then
             _pad=$(( LOGO_COL - 2 ))
-            printf "  %${_pad}s${C_MAGENTA}%s${C_RESET}\n" "" "$_logo"
+            printf "  %${_pad}s${C_MAGENTA}%-${LOGO_WIDTH}s${C_RESET}\n" "" "$_logo"
             _label="${_hint#IDLE_LABEL$'\t'}"
             printf "${C_BLUE_DIM}%s${C_RESET}\n" "$_label"
         elif [[ "$_hint" == \[*x\]* ]]; then
@@ -104,7 +106,7 @@ while IFS=$'\t' read -r f1 f2 f3 f4 f5; do
         else
             _pad=$(( LOGO_COL - 2 ))
             (( _pad < 1 )) && _pad=1
-            printf "  %${_pad}s${C_MAGENTA}%s${C_RESET}\n" "" "$_logo"
+            printf "  %${_pad}s${C_MAGENTA}%-${LOGO_WIDTH}s${C_RESET}\n" "" "$_logo"
         fi
 
     elif [[ "$f1" == "LOGO_TAG" ]]; then
@@ -115,7 +117,7 @@ while IFS=$'\t' read -r f1 f2 f3 f4 f5; do
         else
             _pad=$(( LOGO_COL - 2 ))
             (( _pad < 1 )) && _pad=1
-            printf "  %${_pad}s${C_MAGENTA_BOLD}%s${C_RESET}\n" "" "$_tag"
+            printf "  %${_pad}s${C_MAGENTA_BOLD}%-${LOGO_WIDTH}s${C_RESET}\n" "" "$_tag"
         fi
 
     elif [[ "$f1" == "IDLE_TIP" ]]; then
