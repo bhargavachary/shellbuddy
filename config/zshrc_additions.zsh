@@ -199,6 +199,8 @@ function sb() {
     fi
 }
 
+alias shellbuddy='sb'
+
 alias hints-stop='{ [[ -f $SHELLBUDDY_DIR/daemon.pid ]] && kill $(cat $SHELLBUDDY_DIR/daemon.pid) && rm -f $SHELLBUDDY_DIR/daemon.pid && echo "shellbuddy: stopped"; } 2>/dev/null'
 alias hints-log='tail -f $SHELLBUDDY_DIR/daemon.log'
 alias hints-now='[[ -f $SHELLBUDDY_DIR/current_hints.txt ]] && cat $SHELLBUDDY_DIR/current_hints.txt || echo "No hints yet"'

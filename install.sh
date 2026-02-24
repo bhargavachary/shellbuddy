@@ -704,6 +704,7 @@ for f in \
     "$REPO_DIR/scripts/hint_daemon.py" \
     "$REPO_DIR/scripts/log_cmd.sh" \
     "$REPO_DIR/scripts/show_hints.sh" \
+    "$REPO_DIR/scripts/show_stats.sh" \
     "$REPO_DIR/scripts/toggle_hints_pane.sh" \
     "$REPO_DIR/scripts/start_daemon.sh" \
     "$REPO_DIR/scripts/verify.sh"
@@ -728,6 +729,7 @@ mkdir -p "$INSTALL_DIR/backends" || fail "Cannot create $INSTALL_DIR/backends â€
 cp "$REPO_DIR/scripts/hint_daemon.py"       "$INSTALL_DIR/"
 cp "$REPO_DIR/scripts/log_cmd.sh"           "$INSTALL_DIR/"
 cp "$REPO_DIR/scripts/show_hints.sh"        "$INSTALL_DIR/"
+cp "$REPO_DIR/scripts/show_stats.sh"        "$INSTALL_DIR/"
 cp "$REPO_DIR/scripts/toggle_hints_pane.sh" "$INSTALL_DIR/"
 cp "$REPO_DIR/scripts/start_daemon.sh"      "$INSTALL_DIR/"
 cp "$REPO_DIR/scripts/verify.sh"            "$INSTALL_DIR/"
@@ -942,6 +944,8 @@ function sb() {
         echo "tip: run 'tmux new -s dev' then 'sb' for the persistent hints pane"
     fi
 }
+
+alias shellbuddy='sb'
 
 alias hints-stop='{ [[ -f \$SHELLBUDDY_DIR/daemon.pid ]] && kill \$(cat \$SHELLBUDDY_DIR/daemon.pid) && rm -f \$SHELLBUDDY_DIR/daemon.pid && echo "shellbuddy: stopped"; } 2>/dev/null'
 alias hints-log='tail -f \$SHELLBUDDY_DIR/daemon.log'
