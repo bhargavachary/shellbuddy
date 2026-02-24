@@ -788,7 +788,7 @@ fi
 ok "Config written to $CONFIG_JSON"
 
 ok "Scripts installed"
-info "hint_daemon.py, log_cmd.sh, show_hints.sh, toggle_hints_pane.sh"
+info "hint_daemon.py, log_cmd.sh, show_hints.sh, show_stats.sh, toggle_hints_pane.sh"
 info "backends/copilot.py, backends/ollama.py, backends/openai_compat.py"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1263,6 +1263,7 @@ _check "Config file"                 "[[ -f '$INSTALL_DIR/config.json' ]]"
 _check "Backends installed"           "[[ -f '$INSTALL_DIR/backends/copilot.py' ]]"
 _check "log_cmd.sh executable"        "[[ -x '$INSTALL_DIR/log_cmd.sh' ]]"
 _check "show_hints.sh executable"     "[[ -x '$INSTALL_DIR/show_hints.sh' ]]"
+_check "show_stats.sh present"        "[[ -f '$INSTALL_DIR/show_stats.sh' ]]"
 _check "toggle_hints_pane executable" "[[ -x '$INSTALL_DIR/toggle_hints_pane.sh' ]]"
 _check "start_daemon.sh executable"   "[[ -x '$INSTALL_DIR/start_daemon.sh' ]]"
 _check "Python can run daemon"        "python3 -c 'import sys; sys.path.insert(0,\"$INSTALL_DIR\"); exec(open(\"$INSTALL_DIR/hint_daemon.py\").read().split(\"def run\")[0])'"
