@@ -2,33 +2,43 @@
 
 ## What it does
 
-A persistent strip at the top of your tmux session shows contextual hints as you work:
+A persistent strip at the top of your tmux session shows contextual hints as you work.
+Three layers fire simultaneously — rule matches appear instantly, AI hints follow asynchronously:
 
 ```
-HINTS  ~/projects/myapp  [14:32:07]  (12 cmds)
+HINTS  ~/projects/myapp  [14:32:07]  (47 cmds)
 ──────────────────────────────────────────────────────────
-[5x] cd → z myapp  (zoxide: learns your paths)
-[3x] ls → eza -la --git --icons
+!! [1x] DANGER: git push --force — use --force-with-lease
+-> [3x] ls → eza -la --git --icons
 ·
 thinking ...
 ```
 
-Once the AI finishes reasoning:
+Once the AI finishes:
 
 ```
-HINTS  ~/projects/myapp  [14:32:12]  (12 cmds)
+HINTS  ~/projects/myapp  [14:32:10]  (47 cmds)
 ──────────────────────────────────────────────────────────
-[5x] cd → z myapp  (zoxide: learns your paths)
-[3x] ls → eza -la --git --icons
+!! [1x] DANGER: git push --force — use --force-with-lease
+-> [3x] ls → eza -la --git --icons
 ·
-Python project — try: fd -e py | xargs rg 'def '
+You've pushed twice — consider opening a PR instead
 conda env not active — run: conda activate myenv
 ```
 
-- **Yellow hints** — instant regex pattern matching, zero latency, no AI
-- **Green hints** — local LLM reads your last 10 commands + current directory, thinks about your workflow, gives situation-specific advice
-- **`[3x]` counter** — how many times you've used the suboptimal command this session
-- **`thinking ...`** — shown while the AI model reasons (stripped from final output)
+**Hint prefixes:**
+| Prefix | Severity | Meaning |
+|--------|----------|---------|
+| `!! ` | danger | Data loss, irreversible, security risk |
+| `!  ` | warn | Silent failure, footgun, common mistake |
+| `-> ` | tip | Suboptimal but safe — better idiom exists |
+| `=> ` | upgrade | Faster/modern tool replaces this one |
+
+**Hint sources:**
+- **Layer 1a — Regex rules** (`!!`/`!`/`->`/`=>`): instant, <10ms, matched from `kb.json`
+- **Layer 1b — Ambient LLM**: background thread, fires every ~25s, reads last 50 commands
+- **Layer 2 — Advisor**: background thread, fires on every new command (debounced 5s), writes intent/prediction to context log
+- **Layer 3 — /tip**: on-demand, reads full session context before answering
 
 
 ## Commands
@@ -37,9 +47,9 @@ conda env not active — run: conda activate myenv
 |---------|-------------|
 | `sb` | Start daemon + toggle hints pane in tmux |
 | `/tip <question>` | Ask any CLI/terminal question |
-| `/tip help` | Show help, config, daemon status |
 | `/tip status` | Full diagnostic (config, backends, hints age, logs) |
-| `/tip test` | Force ambient hint generation and show result |
+| `/tip test` | Force an ambient hint cycle and show result |
+| `/tip help` | Show help, config, backend setup guide |
 | `hints-stop` | Stop the daemon |
 | `hints-log` | Tail daemon logs |
 | `hints-status` | Check if daemon is running |
@@ -53,166 +63,250 @@ Ask any terminal question without leaving your shell:
 ```bash
 /tip how to undo last git commit
 /tip find files larger than 100mb
-/tip tar extract .tar.gz to specific dir
+/tip tar extract to specific directory
 /tip ssh tunnel port 5432 to localhost
 /tip diff two directories recursively
-/tip set vim as default git editor
+/tip fix CUDA out of memory in PyTorch
+/tip what does FSDP do vs DDP
 ```
 
-The query uses your configured /tip backend (which can be a larger, more capable model). Response appears directly in your terminal.
+The query is answered using your configured `/tip` backend. Before generating the answer,
+the daemon injects the **full unified context log** — every command you ran, every rule
+that matched, every ambient hint shown, and every prior `/tip` Q&A — so answers are
+situation-aware and non-repetitive.
 
 ### /tip subcommands
 
-**`/tip help`** (or `-h`, `--help`, `h`, or no args)
-
-Shows usage, current config (which backend + model for hints and /tip), daemon status, cloud backend setup guide, and all available commands.
-
-**`/tip status`**
-
-Full diagnostic output:
+**`/tip status`** — full diagnostic:
 ```
 [>_] shellbuddy status
 ────────────────────────────────────────
 Daemon:        running (PID 12345)
 Config:        ~/.shellbuddy/config.json
-Hint backend:  ollama / qwen3:4b
-/tip backend:  ollama / qwen3:8b
+Hint backend:  copilot / gpt-4.1
+/tip backend:  copilot / gpt-4.1
+KB engine:     1680 rules (40 buckets, 8ms load)
 Ambient hints: updated 12s ago
 ·
-HINTS  ~/repos/shellbuddy  [14:23:01]  (8 cmds)
+HINTS  ~/repos/shellbuddy  [14:23:01]  (47 cmds)
 ──────────────────────────────────────────────────────────
-[2x] grep → rg 'pattern'  (10x faster, .gitignore aware)
+-> [2x] grep → rg 'pattern'  (10x faster, .gitignore aware)
 ·
-Python project — try: ruff check instead of flake8
-Command log:   42 commands logged
-·
-Recent daemon log:
-  shellbuddy daemon started (PID 12345)
-  available backends: ollama
-  hint: ollama / qwen3:4b
-  /tip: ollama / qwen3:8b
+You're working on a Python project — ruff is faster than flake8
+Command log:   47 commands logged
+Context log:   83 entries
 ```
 
-Checks: daemon alive, config loaded, hints freshness (age in seconds), command log size, and last 5 daemon log lines.
+**`/tip test`** — injects test commands into the log, waits up to 60s for hints to update,
+and prints the result inline. Useful for verifying the full pipeline end-to-end.
 
-**`/tip test`**
-
-Forces an ambient hint cycle by injecting test commands into the log, then waits up to 60 seconds for the hints file to update. Shows the result inline. Useful for verifying the full pipeline works end-to-end.
+**`/tip help`** — shows usage, current config, and backend setup guide.
 
 
-## How ambient hints work
+## How it all works
 
 ```
-zsh preexec hook → cmd_log.jsonl → hint_daemon.py → current_hints.txt → tmux pane
-                                        ↑
-                               /tip queries also handled here
+zsh preexec hook
+      │
+      ▼
+cmd_log.jsonl ──────────────────────────────────────────────────────────────┐
+      │                                                                      │
+      ▼                                                                      │
+hint_daemon.py                                                               │
+      │                                                                      │
+      ├─ Layer 1a: KB engine (regex dispatch)  <10ms ──► unified_context.jsonl
+      │            matches rule → writes {type:"rule",...}                   │
+      │                                                                      │
+      ├─ Layer 1b: Ambient LLM (background thread)                           │
+      │            every ~25s, reads context log ──────► unified_context.jsonl
+      │            writes {type:"ambient",...}                               │
+      │                                                                      │
+      ├─ Layer 2:  Advisor (background thread)                               │
+      │            every new cmd (debounced 5s)                              │
+      │            reads context log → writes {type:"advisor",...} ──────────┘
+      │
+      ├─ Layer 3:  /tip handler (priority, every poll)
+      │            reads full context log before answering
+      │            writes {type:"tip_q",...} and {type:"tip_a",...}
+      │
+      ▼
+current_hints.txt ──► tmux pane (rendered by show_hints.sh)
 ```
 
-1. Every command is logged (with timestamp + CWD) to `~/.shellbuddy/cmd_log.jsonl`
-2. The daemon polls every 1 second (for /tip responsiveness)
-3. Every 5 seconds, it checks for new commands and runs rule matching instantly
-4. Every 25 seconds (or on CWD change), it sends last 10 commands to the AI hint backend with thinking enabled
-5. While the AI thinks, `thinking ...` is shown in the hints pane
-6. Once done, rule hints (yellow) and AI hints (green) are rendered
-7. `/tip` queries are handled on each poll cycle with the /tip backend
+### The unified context log
 
-### Intent detection
+`~/.shellbuddy/unified_context.jsonl` is a rolling append-only log (capped at 200 entries)
+that every layer reads and writes. Each line is a JSON event:
 
-The daemon analyses your recent commands to detect what you're doing:
-- Committing/pushing code (git add, commit, push)
-- Running tests (pytest, npm test, cargo test)
-- Working with containers (docker, kubectl)
-- Installing dependencies (pip, conda, npm, brew)
-- Working with remote servers (ssh, scp, rsync)
-- Retrying a failing command (same command repeated)
-
-This context is passed to the AI so hints are relevant to your current workflow.
-
-### Thinking mode
-
-Models that support chain-of-thought reasoning (qwen3, deepseek-r1) will think internally before responding. The `<think>...</think>` blocks are stripped — you only see the final answer. This produces significantly better hints at a small speed cost.
-
-
-## Two-model architecture
-
-shellbuddy uses two separate AI backends:
-
-| Role | Purpose | Default |
-|------|---------|---------|
-| **Ambient** | Always-on hints pane, runs every 25s | `ollama / qwen3:4b` |
-| **/tip** | On-demand queries, quality matters | `ollama / qwen3:8b` |
-
-Pick a small, fast model for ambient (it runs continuously). Pick a larger or cloud model for /tip (only runs when you ask).
-
-You can mix backends — e.g. ollama for ambient hints, Claude for /tip queries.
-
-Configuration is in `~/.shellbuddy/config.json` (see SETUP.md for details).
-
-
-## Customising rules
-
-Edit `~/.shellbuddy/hint_daemon.py` — the `UPGRADE_RULES` list near the top:
-
-```python
-UPGRADE_RULES = [
-    (r"^cd\s+",        "cd → z {arg}  (zoxide)"),
-    (r"^docker ps\b",  "docker ps → lazydocker  (full TUI)"),
-    # Add your own:
-    (r"^kubectl get\b", "kubectl → k9s  (live k8s TUI)"),
-]
+```jsonl
+{"ts":"14:31:05","type":"cmd","cmd":"git push --force","cwd":"~/repos/myapp"}
+{"ts":"14:31:05","type":"rule","severity":"danger","hint":"Use --force-with-lease","detail":"..."}
+{"ts":"14:31:08","type":"ambient","text":"You've pushed twice — consider opening a PR"}
+{"ts":"14:31:10","type":"advisor","intent":"deploying main branch","observation":"force push risk","prediction":"will run tests next"}
+{"ts":"14:32:01","type":"tip_q","query":"how do I undo that push"}
+{"ts":"14:32:03","type":"tip_a","text":"git push --force-with-lease origin HEAD~1..."}
 ```
 
-`{arg}` is replaced with the actual argument from the matched command. Rules match via regex against each command, and hints show a `[Nx]` counter for how many times the pattern was hit.
+This means `/tip` never repeats advice that was already given, ambient LLM hints
+don't duplicate what rules already showed, and the advisor builds a coherent picture
+of your session across restarts (log persists on disk).
 
-Rules have a cooldown of 120 seconds — the same rule won't be re-shown within that window.
+### KB engine (Layer 1a)
+
+The knowledge base (`kb.json`) contains ~1,700+ entries across 40 categories generated
+from Linux man pages, sysadmin best practices, ML/DL workflows, and tool documentation.
+
+Each entry has:
+- **pattern** — Python regex matched against the command
+- **severity** — `danger / warn / tip / upgrade`
+- **hint** — ≤68 chars shown in the pane
+- **detail** — 2-3 sentences of expert context, injected into `/tip` prompts when matched
+- **tags** — for future filtering
+
+The engine uses a **dispatcher**: rules are bucketed by first command token at load time.
+Matching `git push --force` only checks ~60 git rules, not all 1,700. Benchmark: ~0.2ms
+for 1,700 rules × 15 commands.
+
+### Advisor (Layer 2)
+
+Fires on every new command (skips if previous call still running — debounced to 5s minimum).
+Reads the last 100 commands + unified context, and writes three things to the context log:
+- **intent** — what you're currently trying to do
+- **observation** — a pattern, risk, or struggle it notices
+- **prediction** — your likely next command
+
+This feeds directly into `/tip` so when you ask a question, the model already "knows"
+what you've been doing.
+
+
+## The knowledge base
+
+`kb.json` ships with ~1,700 rules across 40 categories. To regenerate or extend it:
+
+```bash
+cd ~/repos/shellbuddy
+
+# Full build (all 40 categories, ~10 min, uses Copilot gpt-4.1)
+python3 kb_builder.py
+
+# Rebuild one category
+python3 kb_builder.py --category pytorch
+
+# Resume interrupted build (skips cached categories in .kb_partial/)
+python3 kb_builder.py --resume
+
+# Audit existing kb.json
+python3 kb_builder.py --validate-only
+
+# Install after build
+cp kb.json ~/.shellbuddy/kb.json
+hints-stop && sb
+```
+
+KB categories include: GNU coreutils, sysadmin, networking, security, TLS/PKI, git,
+Python packaging, dev tools, Jupyter, data science, MLOps, machine learning, PyTorch,
+TensorFlow, JAX, HuggingFace, GPU/CUDA, model serving, Docker, Kubernetes, AWS, GCP/Azure,
+Terraform, SQL databases, NoSQL databases, Node.js, profiling, monitoring, vim/neovim,
+tmux, package managers, build systems, VHDL/FPGA, macOS.
+
+### Writing custom rules
+
+Add entries directly to `~/.shellbuddy/kb.json`:
+
+```json
+{
+  "id": "custom-001",
+  "pattern": "^kubectl\\s+delete\\s+.*--all",
+  "cmd": "kubectl",
+  "severity": "danger",
+  "hint": "kubectl delete --all: deletes ALL resources in namespace",
+  "detail": "Without -n flag this targets the default namespace. With --all-namespaces it is cluster-wide. Always specify -n <namespace> explicitly.",
+  "tags": ["kubernetes", "destructive"]
+}
+```
+
+Restart the daemon to reload: `hints-stop && sb`
+
+
+## Customising settings
+
+`~/.shellbuddy/config.json`:
+
+```json
+{
+  "hint_backend": "copilot",
+  "hint_model":   "gpt-4.1",
+  "tip_backend":  "copilot",
+  "tip_model":    "gpt-4.1"
+}
+```
+
+`hint_backend` / `hint_model` — used by ambient LLM hints and the advisor
+`tip_backend` / `tip_model` — used by `/tip` on-demand queries
+
+After editing, restart: `hints-stop && sb`
 
 
 ## Recommended tools
 
-shellbuddy teaches you to use these modern replacements. Install them so hints are actionable:
+shellbuddy hints teach you to use these. Install them so hints are actionable:
 
 ```bash
-brew install zoxide eza bat fd ripgrep lazygit git-delta fzf atuin starship dust bottom thefuck tldr
+brew install zoxide eza bat fd ripgrep lazygit git-delta fzf atuin starship \
+             dust bottom procs tldr jq httpie hyperfine tokei trash glow
 ```
 
 | Tool | Replaces | Why |
 |------|----------|-----|
-| `zoxide` | `cd` | Learns your directories. `z proj` jumps anywhere. |
+| `zoxide` | `cd` | Learns your paths. `z proj` jumps anywhere. |
 | `eza` | `ls` | Git status, icons, tree view |
-| `bat` | `cat` | Syntax highlighting, git diff |
+| `bat` | `cat` | Syntax highlighting, git diff inline |
 | `fd` | `find` | 5-10x faster, respects .gitignore |
 | `ripgrep` | `grep` | 10-100x faster, sane defaults |
-| `lazygit` | git CLI | Full TUI for staging, log, branches |
+| `lazygit` | git CLI | Full TUI: staging, log, branches, stash |
 | `git-delta` | git pager | Side-by-side diffs, syntax highlighting |
-| `fzf` | fuzzy finding | Used by atuin, zoxide, and standalone |
+| `fzf` | fuzzy find | Used by atuin, zoxide, standalone |
 | `atuin` | `history` | SQLite-backed, ranked fuzzy search |
-| `starship` | PS1 prompt | Git, conda, language versions, zero config |
+| `starship` | PS1 | Git, conda, language versions, zero config |
 | `dust` | `du` | Visual disk usage tree |
-| `bottom` | `top`/`htop` | Multi-panel system monitor, vim keys |
-| `thefuck` | retyping | Esc+Esc after a typo auto-corrects it |
+| `bottom` | `top`/`htop` | Multi-panel monitor, vim keys |
+| `procs` | `ps` | Searchable, sortable, tree view |
 | `tldr` | `man` | Example-first command reference |
+| `jq` | python json | Pipe JSON, filter, transform |
+| `trash` | `rm` | Recoverable deletes via macOS Trash |
 
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| "Waiting for hints..." | Run a few commands first (MIN_COMMANDS=2). Check: `/tip status` |
-| Daemon won't start | Check `hints-log`. Common: Ollama not running, wrong Python path |
-| AI hints show error | `[ollama: connection refused]` → run `ollama serve` or `brew services start ollama` |
-| Stale hints | `hints-stop && sb` to restart |
-| /tip times out | Model may be cold-loading (first query takes 30-90s). Check `hints-log` |
-| /tip returns empty | Check `/tip status` — backend may not be available |
-| tmux pane flickers | Increase sleep in show_hints.sh loop (default 3s) |
-| Wrong model | Check `/tip help` to see current config, edit `~/.shellbuddy/config.json` |
+| Hints not updating | Run a few commands. Check: `/tip test` |
+| Daemon won't start | Check `hints-log`. Common: wrong Python path |
+| KB engine not loading | Run `python3 kb_builder.py` then `cp kb.json ~/.shellbuddy/kb.json` |
+| Stale hints | `hints-stop && sb` |
+| /tip times out | Copilot token may have expired — restart VS Code and retry |
+| /tip returns empty | Check `/tip status` — backend availability, daemon log |
+| Context log growing large | Capped at 200 entries automatically |
+| tmux pane flickers | Increase sleep in `show_hints.sh` loop (default 3s) |
+| Wrong model | Check `/tip help`, edit `~/.shellbuddy/config.json` |
 
 
-## The design rationale
+## Design rationale
 
-**Working memory externalisation.** When you're deep in a problem, your working memory is full. Remembering "use `rg` instead of `grep`" requires a context switch. shellbuddy puts the reminder in peripheral vision — a persistent strip you can glance at without breaking flow.
+**Working memory externalisation.** When deep in a problem, your working memory is full.
+Remembering "use `rg` instead of `grep`" requires a context switch. shellbuddy puts the
+reminder in peripheral vision — a persistent strip you glance at without breaking flow.
 
-**Habit formation at point-of-use.** The most effective habit triggers are contextual cues at the moment of the old behaviour. Showing a hint after you type `ls` for the third time is more effective than a cheat sheet you read once.
+**Habit formation at point-of-use.** The most effective habit triggers are contextual cues
+at the moment of the old behaviour. A hint after you type `ls` for the third time is more
+effective than a cheat sheet you read once.
 
-**Frequency signals reduce decision fatigue.** The `[3x]` counter gives you a concrete signal — "I've done this three times" has more weight than "you should use eza".
+**Frequency signals reduce decision fatigue.** The `[3x]` counter gives a concrete signal —
+"I've done this three times" has more weight than "you should use eza".
 
-**Low-interruption.** The pane doesn't pop up or flash. It's there when you glance up — like a sticky note, not a notification.
+**Shared context makes AI useful.** Every layer (rules, ambient LLM, advisor, /tip) reads
+and writes to the same context log. The LLM doesn't need to re-infer your session state
+on every call — it's already there.
+
+**Low-interruption.** The pane doesn't pop up or flash. It's there when you glance up —
+like a sticky note, not a notification.
