@@ -23533,5 +23533,581 @@
       "fd",
       "modern"
     ]
+  },
+  {
+    "id": "gnu-061",
+    "pattern": "^tree(\\s+|$)",
+    "cmd": "tree",
+    "severity": "upgrade",
+    "hint": "eza --tree is faster and shows git status + icons",
+    "detail": "eza --tree replaces tree with color, git status indicators, file icons, and --level depth control. It respects .gitignore by default. Example: eza --tree --level=2 --icons --git",
+    "tags": [
+      "tree",
+      "eza",
+      "directory",
+      "upgrade"
+    ]
+  },
+  {
+    "id": "gnu-062",
+    "pattern": "^tree\\s+(?!.*-L\\b)(?!.*--level\\b)\\S",
+    "cmd": "tree",
+    "severity": "tip",
+    "hint": "tree without -L: add -L 2 to limit depth (avoids huge output)",
+    "detail": "Running tree without a depth limit on a large directory can produce thousands of lines. Use -L 2 or -L 3 to limit recursion. Equivalent: eza --tree --level=2",
+    "tags": [
+      "tree",
+      "depth",
+      "tip"
+    ]
+  },
+  {
+    "id": "gnu-063",
+    "pattern": "^tree\\s+.*-a\\b",
+    "cmd": "tree",
+    "severity": "tip",
+    "hint": "tree -a shows hidden files; combine with -I '.git' to skip .git",
+    "detail": "tree -a includes hidden files and directories. The .git directory is usually noisy \u2014 filter it with -I '.git'. Full example: tree -a -I '.git' -L 3",
+    "tags": [
+      "tree",
+      "hidden",
+      "tip"
+    ]
+  },
+  {
+    "id": "gnu-064",
+    "pattern": "^tree\\s+.*-d\\b",
+    "cmd": "tree",
+    "severity": "tip",
+    "hint": "tree -d lists directories only; use -L to control depth",
+    "detail": "tree -d shows only directories, useful for understanding project structure. Pair with -L 3 for a concise overview. eza --tree --only-dirs is the modern equivalent.",
+    "tags": [
+      "tree",
+      "directories",
+      "tip"
+    ]
+  },
+  {
+    "id": "gnu-065",
+    "pattern": "^fd(\\s+|$)",
+    "cmd": "fd",
+    "severity": "tip",
+    "hint": "fd: use -e for extension, -t f/d for type, -H for hidden files",
+    "detail": "fd is a fast, .gitignore-aware find replacement. Common flags: -e py (extension), -t f (files only), -t d (dirs only), -H (include hidden), -x to exec. Example: fd -e py -t f 'test'",
+    "tags": [
+      "fd",
+      "find",
+      "search"
+    ]
+  },
+  {
+    "id": "gnu-066",
+    "pattern": "^fd\\s+(?!.*-H\\b)(?!.*--hidden\\b)[^-]",
+    "cmd": "fd",
+    "severity": "tip",
+    "hint": "fd skips hidden files by default; add -H to include dotfiles",
+    "detail": "Unlike find, fd ignores hidden files and .gitignore-listed paths by default. Add -H/--hidden to include them, -I/--no-ignore to include gitignored files.",
+    "tags": [
+      "fd",
+      "hidden",
+      "dotfiles"
+    ]
+  },
+  {
+    "id": "gnu-067",
+    "pattern": "^fd\\s+.*-x\\b",
+    "cmd": "fd",
+    "severity": "tip",
+    "hint": "fd -x runs command per file; use -X to pass all results at once (like xargs)",
+    "detail": "-x runs the command once per file (parallel). -X passes all matched files as arguments in one call \u2014 equivalent to fd ... | xargs cmd. Use -X for commands that accept multiple files.",
+    "tags": [
+      "fd",
+      "exec",
+      "xargs"
+    ]
+  },
+  {
+    "id": "gnu-068",
+    "pattern": "^rg(\\s+|$)",
+    "cmd": "rg",
+    "severity": "tip",
+    "hint": "rg: use -t py for filetype, -l for filenames only, -C 3 for context",
+    "detail": "ripgrep key flags: -t <type> (filetype filter), -l/--files-with-matches, -C N (context lines), -i (case-insensitive), -w (whole word), --hidden (include dotfiles), -g '*.py' (glob). Much faster than grep -r.",
+    "tags": [
+      "ripgrep",
+      "rg",
+      "search"
+    ]
+  },
+  {
+    "id": "gnu-069",
+    "pattern": "^rg\\s+.*--no-ignore\\b",
+    "cmd": "rg",
+    "severity": "warn",
+    "hint": "rg --no-ignore disables .gitignore; results may include build artifacts",
+    "detail": "--no-ignore makes rg search through all files including those in .gitignore, .ignore, and global gitignore. Useful for debugging but can flood output with node_modules, __pycache__, etc.",
+    "tags": [
+      "ripgrep",
+      "gitignore",
+      "warn"
+    ]
+  },
+  {
+    "id": "gnu-070",
+    "pattern": "^rg\\s+.*-r\\b",
+    "cmd": "rg",
+    "severity": "tip",
+    "hint": "rg -r replaces matched text \u2014 use with -i and --passthrough for sed-like rewrites",
+    "detail": "rg -r '<replacement>' is for substitution output (not in-place edit). For in-place replacement use: rg -l 'pattern' | xargs sed -i 's/pattern/replacement/g'. Or use sd (a modern sed alternative).",
+    "tags": [
+      "ripgrep",
+      "replace",
+      "sed"
+    ]
+  },
+  {
+    "id": "gnu-071",
+    "pattern": "^bat(\\s+|$)",
+    "cmd": "bat",
+    "severity": "tip",
+    "hint": "bat: use --plain/-p to strip decorations, --language to force syntax",
+    "detail": "bat is a syntax-highlighted cat with git integration. Key flags: -p/--plain (no line numbers/decorations), -l/--language <lang> (force syntax), --diff (show only changed lines), -A (show non-printable chars).",
+    "tags": [
+      "bat",
+      "cat",
+      "syntax"
+    ]
+  },
+  {
+    "id": "gnu-072",
+    "pattern": "^bat\\s+.*\\.log\\b",
+    "cmd": "bat",
+    "severity": "tip",
+    "hint": "bat on .log files: use --language log or pipe with tail -f | bat --paging=never",
+    "detail": "For log files, set --language log for colored log output. For live tailing: tail -f file.log | bat --paging=never --language log. bat handles large files better than cat but less than less for pagination.",
+    "tags": [
+      "bat",
+      "logs",
+      "tail"
+    ]
+  },
+  {
+    "id": "gnu-073",
+    "pattern": "^eza(\\s+|$)",
+    "cmd": "eza",
+    "severity": "tip",
+    "hint": "eza: use -la --git --icons for full view with git status and icons",
+    "detail": "eza key flags: -l (long), -a (all/hidden), --git (show git status per file), --icons (nerd font icons), --tree (directory tree), --level N (tree depth), -s modified (sort by time), --group-directories-first.",
+    "tags": [
+      "eza",
+      "ls",
+      "icons"
+    ]
+  },
+  {
+    "id": "gnu-074",
+    "pattern": "^eza\\s+(?!.*--tree\\b)(?!.*-T\\b).*--level\\b",
+    "cmd": "eza",
+    "severity": "warn",
+    "hint": "eza --level only works with --tree; without it, flag is ignored",
+    "detail": "The --level N (or -L N) depth flag only applies when --tree (-T) is also specified. Without --tree, eza lists the directory at one level regardless of --level.",
+    "tags": [
+      "eza",
+      "tree",
+      "level"
+    ]
+  },
+  {
+    "id": "gnu-075",
+    "pattern": "^gh\\s+pr\\s+create(\\s+|$)",
+    "cmd": "gh",
+    "severity": "tip",
+    "hint": "gh pr create: use --draft to open a draft PR, --web to open in browser",
+    "detail": "gh pr create --fill uses commit title/body automatically. --draft marks it for review later. --assignee @me assigns yourself. --label, --milestone for triage. --base <branch> overrides default base.",
+    "tags": [
+      "gh",
+      "pr",
+      "github"
+    ]
+  },
+  {
+    "id": "gnu-076",
+    "pattern": "^gh\\s+pr\\s+merge(\\s+|$)",
+    "cmd": "gh",
+    "severity": "tip",
+    "hint": "gh pr merge: use --squash, --merge, or --rebase; --delete-branch cleans up",
+    "detail": "Specify merge strategy explicitly: --squash (one clean commit), --merge (merge commit), --rebase (rebase onto base). Add --delete-branch to auto-delete the source branch after merge.",
+    "tags": [
+      "gh",
+      "pr",
+      "merge"
+    ]
+  },
+  {
+    "id": "gnu-077",
+    "pattern": "^gh\\s+(?:workflow|run)\\b",
+    "cmd": "gh",
+    "severity": "tip",
+    "hint": "gh workflow run: use --ref to target a branch, --field to pass inputs",
+    "detail": "gh workflow run <name> --ref main triggers a workflow_dispatch event. View runs: gh run list --workflow <name>. Stream logs: gh run watch. Re-run failed: gh run rerun <id> --failed-only.",
+    "tags": [
+      "gh",
+      "actions",
+      "workflow"
+    ]
+  },
+  {
+    "id": "gnu-078",
+    "pattern": "^gh\\s+issue\\s+create(\\s+|$)",
+    "cmd": "gh",
+    "severity": "tip",
+    "hint": "gh issue create: use --template to apply issue template, --web to open form",
+    "detail": "gh issue create --title 'Bug' --body 'desc' --label bug --assignee @me. Use --template <file> to pre-fill from a template. --web opens the GitHub UI pre-filled if you prefer the browser.",
+    "tags": [
+      "gh",
+      "issue",
+      "github"
+    ]
+  },
+  {
+    "id": "gnu-079",
+    "pattern": "^diff(\\s+|$)",
+    "cmd": "diff",
+    "severity": "upgrade",
+    "hint": "delta or git diff --stat gives richer colored diffs than plain diff",
+    "detail": "For Git-tracked files prefer git diff. For arbitrary files: diff -u for unified format (patch-compatible). Modern alternatives: delta (syntax highlighting), difft (semantic diff), colordiff (color wrapper).",
+    "tags": [
+      "diff",
+      "delta",
+      "compare"
+    ]
+  },
+  {
+    "id": "gnu-080",
+    "pattern": "^diff\\s+(?!.*-u\\b)(?!.*-U\\b)(?!.*--unified\\b)\\S",
+    "cmd": "diff",
+    "severity": "tip",
+    "hint": "diff without -u: add -u for unified format (required for patch/PR diffs)",
+    "detail": "Default diff output is hard to read and not patch-compatible. Use diff -u old new > changes.patch for standard unified format. -U N controls context lines (default 3). diff -r for directories.",
+    "tags": [
+      "diff",
+      "unified",
+      "patch"
+    ]
+  },
+  {
+    "id": "gnu-081",
+    "pattern": "^diff\\s+.*-r\\b",
+    "cmd": "diff",
+    "severity": "tip",
+    "hint": "diff -r on large dirs is slow; use rsync --dry-run or git diff --no-index",
+    "detail": "diff -r recursively compares directories but doesn't scale well. git diff --no-index <dir1> <dir2> works outside git repos and is faster with better output. rsync -n -av shows differences efficiently.",
+    "tags": [
+      "diff",
+      "recursive",
+      "directory"
+    ]
+  },
+  {
+    "id": "gnu-082",
+    "pattern": "^watch(\\s+|$)",
+    "cmd": "watch",
+    "severity": "tip",
+    "hint": "watch: use -d to highlight changes, -n 0.5 for 0.5s interval, -e to stop on error",
+    "detail": "watch key flags: -n <sec> (interval, default 2s, min 0.1s), -d (highlight diffs between runs), -g (exit when output changes), -e (exit on non-zero return code), -t (no title bar for cleaner output).",
+    "tags": [
+      "watch",
+      "interval",
+      "monitor"
+    ]
+  },
+  {
+    "id": "gnu-083",
+    "pattern": "^watch\\s+.*--color\\b",
+    "cmd": "watch",
+    "severity": "tip",
+    "hint": "watch --color passes ANSI color through; needs -c flag not --color",
+    "detail": "Use watch -c (short for --color) to enable ANSI color passthrough. Without it, color escape codes show as raw characters. Combine: watch -c -d -n 1 'kubectl get pods'",
+    "tags": [
+      "watch",
+      "color",
+      "ansi"
+    ]
+  },
+  {
+    "id": "gnu-084",
+    "pattern": "^fzf(\\s+|$)",
+    "cmd": "fzf",
+    "severity": "tip",
+    "hint": "fzf: use --preview, --multi (-m), --bind for powerful interactive selection",
+    "detail": "fzf key flags: --preview 'cmd {}' (preview pane), -m/--multi (multi-select with Tab), --bind 'ctrl-a:select-all', --height 40% (inline mode), --reverse (list below prompt). Pipe anything: ls | fzf, git branch | fzf.",
+    "tags": [
+      "fzf",
+      "fuzzy",
+      "interactive"
+    ]
+  },
+  {
+    "id": "gnu-085",
+    "pattern": "^fzf\\s+.*--preview\\b",
+    "cmd": "fzf",
+    "severity": "tip",
+    "hint": "fzf --preview: use {n} for line number, {} for selection, bat for syntax preview",
+    "detail": "--preview 'bat --color=always {}' gives syntax-highlighted file previews. --preview-window right:60% controls placement. Use --preview-window hidden with toggle-preview bind for on-demand previews.",
+    "tags": [
+      "fzf",
+      "preview",
+      "bat"
+    ]
+  },
+  {
+    "id": "gnu-086",
+    "pattern": "^less(\\s+|$)",
+    "cmd": "less",
+    "severity": "tip",
+    "hint": "less: / to search, n/N next/prev match, F to follow (like tail -f), q to quit",
+    "detail": "less key bindings: / search forward, ? search backward, n/N repeat search, F follow mode (Ctrl+C to stop), g/G top/bottom, = current position, -i for case-insensitive search. Use less -R for color passthrough.",
+    "tags": [
+      "less",
+      "pager",
+      "navigation"
+    ]
+  },
+  {
+    "id": "gnu-087",
+    "pattern": "^less\\s+(?!.*-R\\b)(?!.*--raw\\b)\\S",
+    "cmd": "less",
+    "severity": "tip",
+    "hint": "less without -R: ANSI colors show as raw codes; add -R to render them",
+    "detail": "less -R (--RAW-CONTROL-CHARS) renders ANSI color codes properly. Set in LESS env var to always enable: export LESS='-RFX'. -F quits if content fits in one screen. -X avoids clearing screen on exit.",
+    "tags": [
+      "less",
+      "color",
+      "ansi"
+    ]
+  },
+  {
+    "id": "gnu-088",
+    "pattern": "^mkdir\\s+(?!.*-p\\b)(?!.*--parents\\b)\\S+/",
+    "cmd": "mkdir",
+    "severity": "warn",
+    "hint": "mkdir on nested path without -p: will fail if parent doesn't exist",
+    "detail": "mkdir fails if intermediate directories don't exist. Use mkdir -p to create the full path. Example: mkdir -p a/b/c creates all three levels. Safe to run even if directory exists.",
+    "tags": [
+      "mkdir",
+      "parents",
+      "path"
+    ]
+  },
+  {
+    "id": "gnu-089",
+    "pattern": "^touch\\s+.*\\.(sh|py|rb|js|ts)\\b",
+    "cmd": "touch",
+    "severity": "tip",
+    "hint": "touch creates empty file; for scripts consider adding a shebang first",
+    "detail": "touch <file> creates an empty file or updates its timestamp. For new scripts: printf '#!/usr/bin/env bash\\n' > script.sh && chmod +x script.sh. touch -t 202301011200 sets a specific timestamp.",
+    "tags": [
+      "touch",
+      "script",
+      "shebang"
+    ]
+  },
+  {
+    "id": "gnu-090",
+    "pattern": "^pgrep(\\s+|$)",
+    "cmd": "pgrep",
+    "severity": "tip",
+    "hint": "pgrep: use -a to show full command, -u user to filter by user, -f for full cmdline",
+    "detail": "pgrep matches process name by default (first 15 chars). -f matches against full command line. -a shows full command string. -u <user> filters by owner. -l shows PID and name. Prefer pgrep over ps | grep to avoid matching grep itself.",
+    "tags": [
+      "pgrep",
+      "process",
+      "search"
+    ]
+  },
+  {
+    "id": "gnu-091",
+    "pattern": "^pkill(\\s+|$)",
+    "cmd": "pkill",
+    "severity": "warn",
+    "hint": "pkill matches by name \u2014 test with pgrep first before killing",
+    "detail": "pkill sends SIGTERM by default. -9 sends SIGKILL (unblockable). -f matches full command line. Always run pgrep <pattern> first to confirm what will be killed. -u <user> limits to a specific user's processes.",
+    "tags": [
+      "pkill",
+      "kill",
+      "process",
+      "warn"
+    ]
+  },
+  {
+    "id": "gnu-092",
+    "pattern": "^timeout(\\s+|$)",
+    "cmd": "timeout",
+    "severity": "tip",
+    "hint": "timeout: use -k 5 to SIGKILL after grace period, --preserve-status for exit code",
+    "detail": "timeout <duration> <cmd> sends SIGTERM after duration (e.g. 30s, 5m). -k N sends SIGKILL N seconds after SIGTERM if process doesn't stop. --preserve-status returns the command's exit code, not 124 on timeout.",
+    "tags": [
+      "timeout",
+      "signal",
+      "scripting"
+    ]
+  },
+  {
+    "id": "gnu-093",
+    "pattern": "^time(\\s+|$)",
+    "cmd": "time",
+    "severity": "tip",
+    "hint": "shell 'time' is a builtin; /usr/bin/time -v gives full mem/IO stats (macOS: gtime -v)",
+    "detail": "The shell builtin time shows real/user/sys. /usr/bin/time -v (Linux) gives peak memory, context switches, I/O. On macOS install gnu-time: brew install gnu-time, then use gtime -v for the verbose format.",
+    "tags": [
+      "time",
+      "benchmark",
+      "profiling"
+    ]
+  },
+  {
+    "id": "gnu-094",
+    "pattern": "^ag(\\s+|$)",
+    "cmd": "ag",
+    "severity": "upgrade",
+    "hint": "rg (ripgrep) is 5-10x faster than ag and has better defaults",
+    "detail": "ripgrep (rg) supersedes the silver searcher (ag): faster, respects .gitignore, better Unicode support, and actively maintained. Drop-in: rg 'pattern' replaces ag 'pattern'. Install: brew install ripgrep",
+    "tags": [
+      "ag",
+      "rg",
+      "ripgrep",
+      "upgrade"
+    ]
+  },
+  {
+    "id": "gnu-095",
+    "pattern": "^atuin\\s+search(\\s+|$)",
+    "cmd": "atuin",
+    "severity": "tip",
+    "hint": "atuin search: use --cwd for current dir only, --before/--after for time range",
+    "detail": "atuin search 'pattern' searches history. Flags: --cwd (limit to current directory), --before '1h' (before time), --after '2d' (after time), --limit N, -i (interactive TUI). In zsh: Ctrl+R or Up triggers atuin interactive search.",
+    "tags": [
+      "atuin",
+      "history",
+      "search"
+    ]
+  },
+  {
+    "id": "gnu-096",
+    "pattern": "^atuin\\s+(?:sync|login|register)(\\s+|$)",
+    "cmd": "atuin",
+    "severity": "tip",
+    "hint": "atuin sync: run after login for end-to-end encrypted history sync across machines",
+    "detail": "atuin login -u <user> authenticates with atuin.sh. atuin sync pulls/pushes encrypted history. Set ATUIN_SESSION env var for isolation. Self-host with atuin-server for full privacy. atuin stats shows usage analytics.",
+    "tags": [
+      "atuin",
+      "sync",
+      "history"
+    ]
+  },
+  {
+    "id": "gnu-097",
+    "pattern": "^file(\\s+|$)",
+    "cmd": "file",
+    "severity": "tip",
+    "hint": "file detects true type regardless of extension; use before cat-ing unknown files",
+    "detail": "file <path> reads magic bytes to identify file type \u2014 useful before viewing unknown downloads. file -b for brief (no filename). file -i for MIME type. Example: file binary.dat reveals if it's actually gzip, ELF, or text.",
+    "tags": [
+      "file",
+      "type",
+      "magic"
+    ]
+  },
+  {
+    "id": "gnu-098",
+    "pattern": "^nano(\\s+|$)",
+    "cmd": "nano",
+    "severity": "upgrade",
+    "hint": "nano is fine for quick edits; Ctrl+X to exit, Ctrl+O to save, Ctrl+W to search",
+    "detail": "nano essentials: Ctrl+O write (save), Ctrl+X exit, Ctrl+W search, Ctrl+K cut line, Ctrl+U paste, Ctrl+G help. For larger edits consider vim/nvim. nano --nobackup prevents creating .bak files.",
+    "tags": [
+      "nano",
+      "editor",
+      "keybindings"
+    ]
+  },
+  {
+    "id": "gnu-099",
+    "pattern": "^patch(\\s+|$)",
+    "cmd": "patch",
+    "severity": "tip",
+    "hint": "patch: use --dry-run first to check, -p1 strips leading path component",
+    "detail": "patch < file.patch applies a unified diff. -p1 strips one leading path component (standard for git-generated patches). --dry-run tests without writing. -R reverses a patch. -b creates .orig backups.",
+    "tags": [
+      "patch",
+      "diff",
+      "apply"
+    ]
+  },
+  {
+    "id": "gnu-100",
+    "pattern": "^patch\\s+(?!.*--dry-run\\b)(?!.*-p\\b)\\S",
+    "cmd": "patch",
+    "severity": "warn",
+    "hint": "patch without -p flag: path stripping may be wrong \u2014 use -p1 for git patches",
+    "detail": "git diff output has paths like a/src/file.py. patch needs -p1 to strip the a/ prefix. Without -p, patch tries the full path as-is and fails. Always test with --dry-run before applying.",
+    "tags": [
+      "patch",
+      "path",
+      "strip",
+      "warn"
+    ]
+  },
+  {
+    "id": "gnu-101",
+    "pattern": "^lazygit(\\s+|$)",
+    "cmd": "lazygit",
+    "severity": "tip",
+    "hint": "lazygit: space to stage, c to commit, P to push, ? for keybindings help",
+    "detail": "lazygit key bindings: space (stage/unstage), c (commit), P (push), p (pull), b (branches), l (log), ? (help). In file view: d (discard), e (edit). Works across all git operations without leaving terminal.",
+    "tags": [
+      "lazygit",
+      "git",
+      "tui"
+    ]
+  },
+  {
+    "id": "gnu-102",
+    "pattern": "^ffmpeg(\\s+|$)",
+    "cmd": "ffmpeg",
+    "severity": "tip",
+    "hint": "ffmpeg: always use -c copy for lossless remux; -crf 23 for x264 quality",
+    "detail": "ffmpeg -i input -c copy output remuxes without re-encoding (fast, lossless). For re-encode: -c:v libx264 -crf 23 (quality 0-51, lower=better). -c:a aac -b:a 128k for audio. Always check input with ffprobe first.",
+    "tags": [
+      "ffmpeg",
+      "video",
+      "encode"
+    ]
+  },
+  {
+    "id": "gnu-103",
+    "pattern": "^ffmpeg\\s+.*-y\\b",
+    "cmd": "ffmpeg",
+    "severity": "warn",
+    "hint": "ffmpeg -y overwrites output without asking \u2014 remove if unsure",
+    "detail": "-y flag silently overwrites existing output files. Remove it when the output path might already have valid content you don't want to lose. ffmpeg without -y will prompt before overwriting.",
+    "tags": [
+      "ffmpeg",
+      "overwrite",
+      "warn"
+    ]
+  },
+  {
+    "id": "gnu-104",
+    "pattern": "^ffmpeg\\s+(?!.*-ss\\b)(?!.*-t\\b)(?!.*-to\\b)(?!.*-c\\s+copy\\b)(?!.*-c:v\\b)(?!.*-vn\\b)\\S",
+    "cmd": "ffmpeg",
+    "severity": "tip",
+    "hint": "ffprobe first: check streams/codecs before deciding ffmpeg flags",
+    "detail": "Run ffprobe -v quiet -show_streams input to see codec, resolution, bitrate, duration before transcoding. This prevents picking wrong -c:v or -vf scale values.",
+    "tags": [
+      "ffmpeg",
+      "ffprobe",
+      "inspect"
+    ]
   }
 ]

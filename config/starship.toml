@@ -75,7 +75,7 @@ style = "bold red"
 detect_files = ["Cargo.toml"]
 
 # ── Go ────────────────────────────────────────────────────────────────────────
-[go]
+[golang]
 format = "[$symbol$version]($style) "
 style = "bold cyan"
 detect_files = ["go.mod"]

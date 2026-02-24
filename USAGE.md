@@ -2,29 +2,26 @@
 
 ## What it does
 
-A persistent strip at the top of your tmux session shows contextual hints as you work.
-Three layers fire simultaneously — rule matches appear instantly, AI hints follow asynchronously:
+shellbuddy adds two persistent strips to your tmux session:
 
+**Stats pane** (2 lines, top) — live CPU / RAM / GPU at ~1Hz with sparklines:
 ```
-HINTS  ~/projects/myapp  [14:32:07]  (47 cmds)
-──────────────────────────────────────────────────────────
-!! [1x] DANGER: git push --force — use --force-with-lease
--> [3x] ls → eza -la --git --icons
-·
-thinking ...
+  ◆ shellbuddy  14:32:07  live system stats
+  ┤ CPU ████░░░░  22.5%  ┤ RAM ████████ 15.0/36G  ┤ GPU ░░░░░░░░  3.0%  ┤  cpu ▁▁▁▂  ram ████  gpu ░
 ```
 
-Once the AI finishes:
-
+**Hints pane** (below stats) — contextual hints as you work, with the shellbuddy logo on the right:
 ```
-HINTS  ~/projects/myapp  [14:32:10]  (47 cmds)
-──────────────────────────────────────────────────────────
+HINTS  ~/projects/myapp  [14:32:07]  (47 cmds)               ◆ shellbuddy
+──────────────────────────────────────────────────────────    ─────────────
 !! [1x] DANGER: git push --force — use --force-with-lease
 -> [3x] ls → eza -la --git --icons
 ·
 You've pushed twice — consider opening a PR instead
 conda env not active — run: conda activate myenv
 ```
+
+Three layers fire simultaneously — rule matches appear instantly, AI hints follow asynchronously:
 
 **Hint prefixes:**
 | Prefix | Severity | Meaning |
@@ -40,20 +37,24 @@ conda env not active — run: conda activate myenv
 - **Layer 2 — Advisor**: background thread, fires on every new command (debounced 5s), writes intent/prediction to context log
 - **Layer 3 — /tip**: on-demand, reads full session context before answering
 
+**When idle** (90s with no commands): hints pane switches to rotating shellbuddy usage tips every 20s.
+
 
 ## Commands
 
 | Command | What it does |
 |---------|-------------|
-| `sb` | Start daemon + toggle hints pane in tmux |
+| `sb` | Start daemon + toggle hints+stats panes in tmux |
+| `shellbuddy` | Alias for `sb` |
 | `/tip <question>` | Ask any CLI/terminal question |
 | `/tip status` | Full diagnostic (config, backends, hints age, logs) |
 | `/tip test` | Force an ambient hint cycle and show result |
-| `/tip help` | Show help, config, backend setup guide |
+| `/tip help` | Show help, current config, and backend setup guide |
+| `/tip postmortem` | Show the last auto-drafted git commit message |
 | `hints-stop` | Stop the daemon |
 | `hints-log` | Tail daemon logs |
 | `hints-status` | Check if daemon is running |
-| `Ctrl+A H` | Toggle hints pane in tmux (if tmux.conf installed) |
+| `Ctrl+A H` | Toggle hints+stats panes in tmux (if tmux.conf installed) |
 
 
 ## /tip — on-demand CLI help
@@ -83,9 +84,9 @@ situation-aware and non-repetitive.
 ────────────────────────────────────────
 Daemon:        running (PID 12345)
 Config:        ~/.shellbuddy/config.json
-Hint backend:  copilot / gpt-4.1
+Hint backend:  copilot / gpt-5-mini  [chain: gpt-5-mini → raptor-mini → gpt-4.1]
 /tip backend:  copilot / gpt-4.1
-KB engine:     1680 rules (40 buckets, 8ms load)
+KB engine:     1791 rules (40 buckets, 8ms load)
 Ambient hints: updated 12s ago
 ·
 HINTS  ~/repos/shellbuddy  [14:23:01]  (47 cmds)
@@ -101,6 +102,11 @@ Context log:   83 entries
 and prints the result inline. Useful for verifying the full pipeline end-to-end.
 
 **`/tip help`** — shows usage, current config, and backend setup guide.
+
+**`/tip postmortem`** — shows the last auto-drafted git commit message. shellbuddy
+automatically drafts a commit message whenever it detects a `git commit` command,
+reading the last 50 commands and session context. The draft is saved to
+`~/.shellbuddy/post_mortem.txt` and also accessible via this subcommand.
 
 
 ## How it all works
@@ -119,6 +125,7 @@ hint_daemon.py                                                               │
       │                                                                      │
       ├─ Layer 1b: Ambient LLM (background thread)                           │
       │            every ~25s, reads context log ──────► unified_context.jsonl
+      │            model chain: gpt-5-mini → raptor-mini → gpt-4.1           │
       │            writes {type:"ambient",...}                               │
       │                                                                      │
       ├─ Layer 2:  Advisor (background thread)                               │
@@ -129,8 +136,13 @@ hint_daemon.py                                                               │
       │            reads full context log before answering
       │            writes {type:"tip_q",...} and {type:"tip_a",...}
       │
+      ├─ Post-mortem: fires on git commit detection
+      │            reads last 50 cmds + context → drafts commit message
+      │            writes to post_mortem.txt + {type:"post_mortem",...}
+      │
       ▼
-current_hints.txt ──► tmux pane (rendered by show_hints.sh)
+current_hints.txt ──► tmux hints pane (show_hints.sh)
+                       + tmux stats pane (show_stats.sh — CPU/RAM/GPU live)
 ```
 
 ### The unified context log
@@ -143,6 +155,7 @@ that every layer reads and writes. Each line is a JSON event:
 {"ts":"14:31:05","type":"rule","severity":"danger","hint":"Use --force-with-lease","detail":"..."}
 {"ts":"14:31:08","type":"ambient","text":"You've pushed twice — consider opening a PR"}
 {"ts":"14:31:10","type":"advisor","intent":"deploying main branch","observation":"force push risk","prediction":"will run tests next"}
+{"ts":"14:31:15","type":"post_mortem","text":"feat: force-push to main — replace with --force-with-lease"}
 {"ts":"14:32:01","type":"tip_q","query":"how do I undo that push"}
 {"ts":"14:32:03","type":"tip_a","text":"git push --force-with-lease origin HEAD~1..."}
 ```
@@ -153,7 +166,7 @@ of your session across restarts (log persists on disk).
 
 ### KB engine (Layer 1a)
 
-The knowledge base (`kb.json`) contains ~1,700+ entries across 40 categories generated
+The knowledge base (`kb.json`) contains ~1,791 entries across 40 categories generated
 from Linux man pages, sysadmin best practices, ML/DL workflows, and tool documentation.
 
 Each entry has:
@@ -164,8 +177,20 @@ Each entry has:
 - **tags** — for future filtering
 
 The engine uses a **dispatcher**: rules are bucketed by first command token at load time.
-Matching `git push --force` only checks ~60 git rules, not all 1,700. Benchmark: ~0.2ms
-for 1,700 rules × 15 commands.
+Matching `git push --force` only checks ~60 git rules, not all 1,791. Benchmark: ~0.2ms
+for 1,791 rules × 15 commands.
+
+### Ambient LLM (Layer 1b) — model chain
+
+For Copilot backends, ambient hints try models in order, using the first that responds:
+
+```
+gpt-5-mini  →  raptor-mini  →  gpt-4.1
+(fastest)      (fallback)      (reliable fallback)
+```
+
+Configured via `hint_model_chain` in `~/.shellbuddy/config.json`. `/tip` always uses
+`tip_model` directly with no chain.
 
 ### Advisor (Layer 2)
 
@@ -178,10 +203,21 @@ Reads the last 100 commands + unified context, and writes three things to the co
 This feeds directly into `/tip` so when you ask a question, the model already "knows"
 what you've been doing.
 
+### Post-mortem commit drafting
+
+Whenever shellbuddy detects a `git commit` command, it fires a background thread that
+reads the last 50 commands and session context, then calls the hint model to draft a
+conventional commit message. The result is:
+- Saved to `~/.shellbuddy/post_mortem.txt`
+- Logged to `unified_context.jsonl` as `{type:"post_mortem",...}`
+- Accessible via `/tip postmortem`
+
+Useful as a starting point when you forgot to write a meaningful commit message.
+
 
 ## The knowledge base
 
-`kb.json` ships with ~1,700 rules across 40 categories. To regenerate or extend it:
+`kb.json` ships with ~1,791 rules across 40 categories. To regenerate or extend it:
 
 ```bash
 cd ~/repos/shellbuddy
@@ -234,17 +270,25 @@ Restart the daemon to reload: `hints-stop && sb`
 
 ```json
 {
-  "hint_backend": "copilot",
-  "hint_model":   "gpt-4.1",
-  "tip_backend":  "copilot",
-  "tip_model":    "gpt-4.1"
+  "hint_backend":      "copilot",
+  "hint_model":        "gpt-5-mini",
+  "hint_model_chain":  ["gpt-5-mini", "raptor-mini", "gpt-4.1"],
+  "tip_backend":       "copilot",
+  "tip_model":         "gpt-4.1"
 }
 ```
 
-`hint_backend` / `hint_model` — used by ambient LLM hints and the advisor
-`tip_backend` / `tip_model` — used by `/tip` on-demand queries
+| Key | Purpose |
+|-----|---------|
+| `hint_backend` | Backend for ambient LLM hints and the advisor |
+| `hint_model` | Primary model for ambient hints (first in chain) |
+| `hint_model_chain` | Ordered fallback chain for Copilot ambient hints |
+| `tip_backend` | Backend for `/tip` on-demand queries |
+| `tip_model` | Model for `/tip` (used directly, no chain) |
 
 After editing, restart: `hints-stop && sb`
+
+Check current config: `/tip help`
 
 
 ## Recommended tools
@@ -288,7 +332,11 @@ brew install zoxide eza bat fd ripgrep lazygit git-delta fzf atuin starship \
 | /tip returns empty | Check `/tip status` — backend availability, daemon log |
 | Context log growing large | Capped at 200 entries automatically |
 | tmux pane flickers | Increase sleep in `show_hints.sh` loop (default 3s) |
+| Stats pane shows 0% GPU | Normal if no GPU workload is running — reads `ioreg IOAccelerator` |
+| Stats pane missing | Run `sb` or `Ctrl+A H` to toggle it back |
 | Wrong model | Check `/tip help`, edit `~/.shellbuddy/config.json` |
+| Hint model always falls back to gpt-4.1 | Check Copilot VS Code token; gpt-5-mini may be rate-limited |
+| Logo not showing in hints | Terminal may be too narrow — needs ≥80 columns |
 
 
 ## Design rationale

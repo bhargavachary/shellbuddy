@@ -81,7 +81,7 @@ except Exception as _e:
 
 
 def _load_config():
-    global HINT_BACKEND, HINT_MODEL, TIP_BACKEND, TIP_MODEL
+    global HINT_BACKEND, HINT_MODEL, HINT_MODEL_CHAIN, TIP_BACKEND, TIP_MODEL
     global OLLAMA_URL, CLAUDE_MODEL, COPILOT_MODEL, OPENAI_URL, OPENAI_MODEL
 
     if not CONFIG_FILE.exists():

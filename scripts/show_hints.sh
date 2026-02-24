@@ -29,12 +29,11 @@ C_MAGENTA_BOLD='\033[1;35m'
 C_BLUE_DIM='\033[2;34m'
 C_WHITE_DIM='\033[2;37m'
 
-tput clear 2>/dev/null || clear
+printf '\033[2J\033[H'
 
 if [[ ! -f "$HINTS_FILE" ]]; then
     printf "${C_DIM}  [>_] Waiting for hints... (run a few commands)${C_RESET}\n"
-    sleep 2
-    exec "$0"
+    exit 0
 fi
 
 # Check daemon alive
@@ -81,42 +80,42 @@ while IFS=$'\t' read -r f1 f2 f3 f4 f5; do
     elif [[ "$f1" == "LOGO" ]]; then
         # LOGO\t<logo>\t<hint_or_special>
         # f3 may itself be IDLE_TIP\t<cmd>\t<desc> or IDLE_LABEL\t<text>
-        local logo="$f2" hint="$f3"
+        _logo="$f2" _hint="$f3"
         # Detect embedded special markers in hint slot
-        if [[ "$hint" == IDLE_TIP$'\t'* ]]; then
+        if [[ "$_hint" == IDLE_TIP$'\t'* ]]; then
             # Print logo-only line (no hint), then idle tip below
-            local pad=$(( LOGO_COL - 2 ))
-            printf "  %${pad}s${C_MAGENTA}%s${C_RESET}\n" "" "$logo"
-            local tip_rest="${hint#IDLE_TIP$'\t'}"
-            local tip_cmd="${tip_rest%%$'\t'*}"
-            local tip_desc="${tip_rest#*$'\t'}"
-            printf "${C_CYAN}  %-28s${C_RESET}${C_WHITE_DIM}%s${C_RESET}\n" "$tip_cmd" "$tip_desc"
-        elif [[ "$hint" == IDLE_LABEL$'\t'* ]]; then
-            local pad=$(( LOGO_COL - 2 ))
-            printf "  %${pad}s${C_MAGENTA}%s${C_RESET}\n" "" "$logo"
-            local label="${hint#IDLE_LABEL$'\t'}"
-            printf "${C_BLUE_DIM}%s${C_RESET}\n" "$label"
-        elif [[ "$hint" == \[*x\]* ]]; then
-            _print_with_logo "$hint" "$logo" "$C_YELLOW"
-        elif [[ "$hint" == "·" ]]; then
-            _print_with_logo "·" "$logo" "$C_DIM"
-        elif [[ -n "$hint" ]]; then
-            _print_with_logo "$hint" "$logo" "$C_GREEN"
+            _pad=$(( LOGO_COL - 2 ))
+            printf "  %${_pad}s${C_MAGENTA}%s${C_RESET}\n" "" "$_logo"
+            _tip_rest="${_hint#IDLE_TIP$'\t'}"
+            _tip_cmd="${_tip_rest%%$'\t'*}"
+            _tip_desc="${_tip_rest#*$'\t'}"
+            printf "${C_CYAN}  %-28s${C_RESET}${C_WHITE_DIM}%s${C_RESET}\n" "$_tip_cmd" "$_tip_desc"
+        elif [[ "$_hint" == IDLE_LABEL$'\t'* ]]; then
+            _pad=$(( LOGO_COL - 2 ))
+            printf "  %${_pad}s${C_MAGENTA}%s${C_RESET}\n" "" "$_logo"
+            _label="${_hint#IDLE_LABEL$'\t'}"
+            printf "${C_BLUE_DIM}%s${C_RESET}\n" "$_label"
+        elif [[ "$_hint" == \[*x\]* ]]; then
+            _print_with_logo "$_hint" "$_logo" "$C_YELLOW"
+        elif [[ "$_hint" == "·" ]]; then
+            _print_with_logo "·" "$_logo" "$C_DIM"
+        elif [[ -n "$_hint" ]]; then
+            _print_with_logo "$_hint" "$_logo" "$C_GREEN"
         else
-            local pad=$(( LOGO_COL - 2 ))
-            (( pad < 1 )) && pad=1
-            printf "  %${pad}s${C_MAGENTA}%s${C_RESET}\n" "" "$logo"
+            _pad=$(( LOGO_COL - 2 ))
+            (( _pad < 1 )) && _pad=1
+            printf "  %${_pad}s${C_MAGENTA}%s${C_RESET}\n" "" "$_logo"
         fi
 
     elif [[ "$f1" == "LOGO_TAG" ]]; then
         # LOGO_TAG\t<tag>\t<hint>
-        local tag="$f2" hint="$f3"
-        if [[ -n "$hint" ]]; then
-            _print_with_logo "$hint" "$tag" "$C_GREEN" "$C_MAGENTA_BOLD"
+        _tag="$f2" _hint="$f3"
+        if [[ -n "$_hint" ]]; then
+            _print_with_logo "$_hint" "$_tag" "$C_GREEN" "$C_MAGENTA_BOLD"
         else
-            local pad=$(( LOGO_COL - 2 ))
-            (( pad < 1 )) && pad=1
-            printf "  %${pad}s${C_MAGENTA_BOLD}%s${C_RESET}\n" "" "$tag"
+            _pad=$(( LOGO_COL - 2 ))
+            (( _pad < 1 )) && _pad=1
+            printf "  %${_pad}s${C_MAGENTA_BOLD}%s${C_RESET}\n" "" "$_tag"
         fi
 
     elif [[ "$f1" == "IDLE_TIP" ]]; then

@@ -102,7 +102,7 @@ def _read_gpu():
 
 # ── Animated sparkline history ─────────────────────────────────────────────────
 
-SPARK_CHARS = ' ▁▂▃▄▅▆▇█'
+SPARK_CHARS = '▁▂▃▄▅▆▇█'
 
 class _History:
     def __init__(self, size=20):
@@ -114,8 +114,11 @@ class _History:
         buf = self._buf[-width:]
         out = []
         for v in buf:
-            idx = round(v / 100 * (len(SPARK_CHARS) - 1))
-            out.append(SPARK_CHARS[max(0, min(idx, len(SPARK_CHARS)-1))])
+            if v <= 0.0:
+                out.append('░')
+            else:
+                idx = max(0, min(round(v / 100 * (len(SPARK_CHARS) - 1)), len(SPARK_CHARS) - 1))
+                out.append(SPARK_CHARS[idx])
         return ''.join(out)
 
 _cpu_hist = _History()
@@ -210,10 +213,19 @@ def _move_to_line(n):
     sys.stdout.write(f'\033[{n};1H')
 
 
+def _cleanup():
+    sys.stdout.write(SHOW_C)
+    sys.stdout.write('\033[2J\033[H')
+    sys.stdout.flush()
+
+
 def main():
-    signal.signal(signal.SIGTERM, lambda *_: (
-        sys.stdout.write(SHOW_C), sys.exit(0)
-    ))
+    def _sigterm(*_):
+        _cleanup()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _sigterm)
+    signal.signal(signal.SIGHUP, _sigterm)
 
     # Start background sampler
     t = threading.Thread(target=_sampler_loop, daemon=True)
@@ -239,9 +251,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        sys.stdout.write(SHOW_C)
-        sys.stdout.write('\033[2J\033[H')
-        sys.stdout.flush()
+        _cleanup()
 
 
 if __name__ == '__main__':
