@@ -9,6 +9,7 @@ No external dependencies — pure stdlib.
 """
 
 import subprocess, re, sys, time, os, signal, threading
+_ANSI_RE = re.compile(r'\033\[[0-9;]*m')
 from datetime import datetime
 
 # ── ANSI ─────────────────────────────────────────────────────────────────────
@@ -184,12 +185,18 @@ def _render():
     ts = datetime.now().strftime('%H:%M:%S')
     ram_pct = ram / RAM_TOTAL * 100 if RAM_TOTAL else 0
 
-    # Line 1 — branding + timestamp
-    line1 = (
-        f"  {MAG_B}◆ shellbuddy{R}  "
-        f"{CYAN_D}{ts}{R}  "
-        f"{DIM}live system stats{R}"
-    )
+    # Line 1 — timestamp + live label on left, branding right-aligned under logo
+    left1 = f"  {CYAN_D}{ts}{R}  {DIM}live system stats{R}"
+    brand = f"{MAG_B}◆ shellbuddy{R}"
+    brand_vis = len("◆ shellbuddy")   # visible chars (no ANSI)
+    # Logo in hints pane is LOGO_WIDTH=46 chars, anchored at COLS-46-2
+    logo_col = max(30, COLS - 46 - 2)
+    # Right-edge of logo block = logo_col + 46; align brand's right edge there
+    brand_col = logo_col + 46 - brand_vis
+    # Pad from end of left1 (strip ANSI for length calc)
+    left1_vis = len(_ANSI_RE.sub('', left1))
+    pad = max(1, brand_col - left1_vis)
+    line1 = left1 + ' ' * pad + brand
 
     # Line 2 — stats bars
     cpu_block = _stat_block('CPU', cpu,  f'{cpu:4.1f}%')
