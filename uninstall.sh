@@ -182,5 +182,29 @@ fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 printf "\n  ${C_GREEN}${C_BOLD}shellbuddy uninstalled.${C_RESET}\n"
-printf "  ${C_DIM}Reload your shell: source ~/.zshrc${C_RESET}\n"
-printf "  ${C_DIM}Or open a new terminal tab.${C_RESET}\n\n"
+printf "  ${C_DIM}Reload your shell: source ~/.zshrc  (or open a new tab)${C_RESET}\n"
+
+# ── Package summary ───────────────────────────────────────────────────────────
+printf "\n  ${C_BOLD}Packages not removed${C_RESET} ${C_DIM}(may have been installed by shellbuddy):${C_RESET}\n"
+printf "  ${C_DIM}Removing them could break other tools — uninstall manually if needed.${C_RESET}\n\n"
+
+_pkg_row() {
+    local category="$1"; shift
+    printf "  ${C_CYAN}%-16s${C_RESET}" "$category"
+    printf "${C_DIM}%s${C_RESET}\n" "$*"
+}
+
+_pkg_row "Prerequisites"  "zsh  python3  tmux  homebrew"
+_pkg_row "Shell (Core)"   "zoxide  eza  bat  fd  ripgrep  fzf  starship  atuin  tldr"
+_pkg_row "Git & Dev"      "lazygit  git-delta  gh  git-lfs"
+_pkg_row "System"         "bottom  dust  duf  procs  bandwhich"
+_pkg_row "Python"         "miniconda  jupyterlab  black  ruff  uv"
+_pkg_row "Network"        "httpie  jq  yq  mtr  wget  nmap"
+_pkg_row "Infra"          "lazydocker  dive  k9s  terraform"
+_pkg_row "Mac Tools"      "coreutils  trash  watch  tree  rename  entr  hyperfine  tokei  glow  mas"
+_pkg_row "Docs"           "pandoc  glow  pdfgrep"
+_pkg_row "AI Backends"    "ollama  pycryptodome (pip)"
+
+printf "\n  ${C_DIM}To remove a brew package:  brew uninstall <name>${C_RESET}\n"
+printf "  ${C_DIM}To remove a pip package:   pip uninstall <name>${C_RESET}\n"
+printf "  ${C_DIM}To remove ollama:          brew uninstall ollama && rm -rf ~/.ollama${C_RESET}\n\n"
