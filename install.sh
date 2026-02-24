@@ -962,7 +962,43 @@ function sb() {
 
 alias shellbuddy='sb'
 
-alias hints-stop='{ [[ -f \$SHELLBUDDY_DIR/daemon.pid ]] && kill \$(cat \$SHELLBUDDY_DIR/daemon.pid) && rm -f \$SHELLBUDDY_DIR/daemon.pid && echo "shellbuddy: stopped"; } 2>/dev/null'
+function hints-start() {
+    local pid_file="\$SHELLBUDDY_DIR/daemon.pid"
+    local _pid
+    _pid=\$(cat "\$pid_file" 2>/dev/null)
+    if [[ -f "\$pid_file" ]] && kill -0 "\$_pid" 2>/dev/null; then
+        echo "shellbuddy: already running (PID \$_pid)"
+        return 0
+    fi
+    SHELLBUDDY_DIR="\$SHELLBUDDY_DIR" source "\$SHELLBUDDY_DIR/start_daemon.sh"
+    sleep 0.5
+    _pid=\$(cat "\$pid_file" 2>/dev/null)
+    if [[ -f "\$pid_file" ]] && kill -0 "\$_pid" 2>/dev/null; then
+        echo "shellbuddy: started (PID \$_pid)"
+    else
+        echo "shellbuddy: failed to start — check: hints-log"
+        return 1
+    fi
+}
+
+function hints-stop() {
+    local pid_file="\$SHELLBUDDY_DIR/daemon.pid"
+    local pid
+    pid=\$(cat "\$pid_file" 2>/dev/null)
+    if [[ ! -f "\$pid_file" ]] || ! kill -0 "\$pid" 2>/dev/null; then
+        echo "shellbuddy: not running"
+        return 0
+    fi
+    kill "\$pid" 2>/dev/null
+    # Wait for daemon's SIGTERM handler to remove PID file (up to 2s)
+    local i=0
+    while [[ -f "\$pid_file" ]] && (( i < 20 )); do
+        sleep 0.1; (( i++ ))
+    done
+    [[ -f "\$pid_file" ]] && rm -f "\$pid_file"
+    echo "shellbuddy: stopped (PID \$pid)"
+}
+
 alias hints-log='tail -f \$SHELLBUDDY_DIR/daemon.log'
 alias hints-now='[[ -f \$SHELLBUDDY_DIR/current_hints.txt ]] && cat \$SHELLBUDDY_DIR/current_hints.txt || echo "No hints yet"'
 alias hints-status='{ [[ -f \$SHELLBUDDY_DIR/daemon.pid ]] && kill -0 \$(cat \$SHELLBUDDY_DIR/daemon.pid) 2>/dev/null && echo "shellbuddy: running (PID \$(cat \$SHELLBUDDY_DIR/daemon.pid))"; } || echo "shellbuddy: stopped"'
