@@ -4,16 +4,20 @@ shellbuddy — hint_daemon.py
 Ambient terminal coaching daemon. 3-layer architecture:
 
   Layer 1 — Regex Reflex  (<10ms, instant rule hints)
-  Layer 2 — Async Advisor (gpt-4.1, every 5 cmds, builds persistent session context)
-  Layer 3 — /tip Expert   (gpt-4.1, on-demand, uses session context from Layer 2)
+  Layer 2 — Async Advisor (background thread, every command debounced)
+  Layer 3 — /tip Expert   (on-demand, uses full unified session context)
 
 Config: ~/.shellbuddy/config.json
   {
-    "hint_backend": "copilot", "hint_model": "gpt-4.1",
-    "tip_backend":  "copilot", "tip_model":  "gpt-4.1"
+    "hint_backend":       "copilot",
+    "hint_model":         "gpt-5-mini",
+    "hint_model_chain":   ["gpt-5-mini", "raptor-mini", "gpt-4.1"],
+    "tip_backend":        "copilot",
+    "tip_model":          "gpt-4.1"
   }
 
 Backends: ollama, claude, copilot, openai
+Post-mortem: auto-drafted commit messages on git commit (uses hint_model_chain)
 """
 
 import os, sys, time, json, subprocess, re, urllib.request, urllib.error, threading
@@ -36,12 +40,13 @@ UNIFIED_CTX      = DATA_DIR / "unified_context.jsonl"  # single truth: rules+amb
 
 # Defaults (overridden by config.json)
 HINT_BACKEND    = "copilot"
-HINT_MODEL      = "gpt-4.1"
+HINT_MODEL      = "gpt-5-mini"
+HINT_MODEL_CHAIN = ["gpt-5-mini", "raptor-mini", "gpt-4.1"]  # fallback chain for ambient
 TIP_BACKEND     = "copilot"
 TIP_MODEL       = "gpt-4.1"
 OLLAMA_URL      = "http://localhost:11434"
 CLAUDE_MODEL    = "claude-haiku-4-5-20251001"
-COPILOT_MODEL   = "gpt-4.1"
+COPILOT_MODEL   = "gpt-5-mini"
 OPENAI_URL      = "https://api.openai.com/v1"
 OPENAI_MODEL    = "gpt-4o-mini"
 
@@ -87,15 +92,16 @@ def _load_config():
         print(f"  warning: bad config.json — {e}", flush=True)
         return
 
-    HINT_BACKEND  = cfg.get("hint_backend",  HINT_BACKEND)
-    HINT_MODEL    = cfg.get("hint_model",    HINT_MODEL)
-    TIP_BACKEND   = cfg.get("tip_backend",   TIP_BACKEND)
-    TIP_MODEL     = cfg.get("tip_model",     TIP_MODEL)
-    OLLAMA_URL    = cfg.get("ollama_url",    OLLAMA_URL)
-    CLAUDE_MODEL  = cfg.get("claude_model",  CLAUDE_MODEL)
-    COPILOT_MODEL = cfg.get("copilot_model", COPILOT_MODEL)
-    OPENAI_URL    = cfg.get("openai_url",    OPENAI_URL)
-    OPENAI_MODEL  = cfg.get("openai_model",  OPENAI_MODEL)
+    HINT_BACKEND       = cfg.get("hint_backend",       HINT_BACKEND)
+    HINT_MODEL         = cfg.get("hint_model",         HINT_MODEL)
+    HINT_MODEL_CHAIN   = cfg.get("hint_model_chain",   HINT_MODEL_CHAIN)
+    TIP_BACKEND        = cfg.get("tip_backend",        TIP_BACKEND)
+    TIP_MODEL          = cfg.get("tip_model",          TIP_MODEL)
+    OLLAMA_URL         = cfg.get("ollama_url",         OLLAMA_URL)
+    CLAUDE_MODEL       = cfg.get("claude_model",       CLAUDE_MODEL)
+    COPILOT_MODEL      = cfg.get("copilot_model",      COPILOT_MODEL)
+    OPENAI_URL         = cfg.get("openai_url",         OPENAI_URL)
+    OPENAI_MODEL       = cfg.get("openai_model",       OPENAI_MODEL)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -315,12 +321,22 @@ PROJECT_INDICATORS = [
 #  AI BACKENDS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _call_copilot(prompt, model=None):
+def _call_copilot(prompt, model=None, max_tokens=150):
     try:
         from backends.copilot import call_copilot
-        return call_copilot(prompt, model=model or COPILOT_MODEL)
+        return call_copilot(prompt, model=model or COPILOT_MODEL, max_tokens=max_tokens)
     except Exception:
         return None
+
+
+def _call_copilot_chain(prompt, models=None, max_tokens=150):
+    """Try each model in the chain; return first successful result."""
+    chain = models or HINT_MODEL_CHAIN
+    for model in chain:
+        result = _call_copilot(prompt, model=model, max_tokens=max_tokens)
+        if result:
+            return result
+    return None
 
 
 def _call_claude(prompt, model=None):
@@ -427,8 +443,11 @@ def _call_backend(backend, prompt, model=None):
 
 
 def call_ai_hint(prompt):
+    """Call ambient hint model. Uses model chain for copilot (gpt-5-mini → raptor-mini → gpt-4.1)."""
     if HINT_BACKEND not in _AVAILABLE_BACKENDS:
         return ""
+    if HINT_BACKEND == "copilot":
+        return _call_copilot_chain(prompt, models=HINT_MODEL_CHAIN, max_tokens=300) or ""
     return _call_backend(HINT_BACKEND, prompt, model=HINT_MODEL) or ""
 
 
@@ -509,6 +528,8 @@ def ctx_to_prompt_block(entries: list[dict]) -> str:
             lines.append(f"[{t}] /tip asked: {e.get('query','')}")
         elif typ == "tip_a":
             lines.append(f"[{t}] /tip answer: {e.get('text','')[:150]}")
+        elif typ == "post_mortem":
+            lines.append(f"[{t}] commit drafted: {e.get('text','')[:80]}")
     return "\n".join(lines)
 
 
@@ -559,6 +580,73 @@ def run_advisor(recent_cmds, cwd):
         print(f"  advisor: {entry['intent'][:60]}", flush=True)
     except Exception as e:
         print(f"  advisor error: {e}", flush=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  POST-MORTEM COMMIT MESSAGE GENERATOR
+#  Fires when user runs `git commit ...`. Reads last ~50 commands and session
+#  context, drafts a commit message, writes it to post_mortem.txt.
+#  Uses hint_model_chain (gpt-5-mini → raptor-mini → gpt-4.1).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+POST_MORTEM_OUT = DATA_DIR / "post_mortem.txt"
+_POST_MORTEM_WINDOW = 50  # commands to look back
+
+
+def _is_git_commit(cmd: str) -> bool:
+    """Return True if the command is a git commit (not amend, not --no-edit)."""
+    return bool(re.match(r"^git\s+commit\b", cmd.strip()))
+
+
+def build_post_mortem_prompt(recent_cmds, cwd, ctx_block):
+    cwd_short = str(Path(cwd)).replace(str(Path.home()), "~")
+    cmd_summary = "\n".join(
+        f"  {c.get('ts','')[-8:]}  {c.get('cmd','')}" for c in recent_cmds
+    )
+    prompt = (
+        "You are a senior engineer writing a git commit message.\n"
+        "Analyze the shell session below and draft the best possible commit message.\n\n"
+        f"Working directory: {cwd_short}\n"
+    )
+    if ctx_block:
+        prompt += f"\nSession context (hints, /tip answers, advisor observations):\n{ctx_block}\n"
+    prompt += (
+        f"\nCommands run in this session (oldest→newest):\n{cmd_summary}\n\n"
+        "Output format — exactly 2 parts, plain text:\n"
+        "Line 1: Subject line (≤72 chars, imperative mood, no period)\n"
+        "Line 2: blank\n"
+        "Lines 3+: Body (optional, 2-5 lines max — what changed and why, not how)\n\n"
+        "Rules:\n"
+        "- Be specific about what changed based on the commands\n"
+        "- If tests were run, mention if they passed\n"
+        "- If errors were seen and fixed, mention the fix\n"
+        "- No 'Update files', 'Make changes', or other vague phrases\n"
+        "- No markdown, no code fences\n"
+    )
+    return prompt
+
+
+def run_post_mortem(recent_cmds, cwd):
+    """Draft a commit message from the session and write to post_mortem.txt."""
+    try:
+        ctx_entries = ctx_read(n=40)
+        ctx_block = ctx_to_prompt_block(ctx_entries)
+        prompt = build_post_mortem_prompt(recent_cmds, cwd, ctx_block)
+
+        # Use chain: gpt-5-mini → raptor-mini → gpt-4.1
+        if HINT_BACKEND == "copilot":
+            result = _call_copilot_chain(prompt, models=HINT_MODEL_CHAIN, max_tokens=300)
+        else:
+            result = _call_backend(HINT_BACKEND, prompt, model=HINT_MODEL)
+
+        if not result:
+            return
+
+        POST_MORTEM_OUT.write_text(result.strip())
+        ctx_append({"type": "post_mortem", "text": result[:200]})
+        print(f"  post-mortem written ({len(result)} chars)", flush=True)
+    except Exception as e:
+        print(f"  post-mortem error: {e}", flush=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -693,6 +781,18 @@ def handle_tip_query():
 
         print(f"  /tip query: {query!r}", flush=True)
 
+        # Special subcommand: /tip postmortem — return last drafted commit message
+        if query.strip().lower() in ("postmortem", "post-mortem", "commit message"):
+            if POST_MORTEM_OUT.exists():
+                msg = POST_MORTEM_OUT.read_text().strip()
+                result = f"Last drafted commit message:\n\n{msg}"
+            else:
+                result = "No post-mortem yet. Run 'git commit ...' to trigger one."
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
         # Log the question to unified context immediately
         ctx_append({"type": "tip_q", "query": query})
 
@@ -800,24 +900,28 @@ def run():
     _load_config()
     _probe_backends()
 
-    last_cmd_count    = 0
-    last_ai_call      = 0.0
-    last_advisor_call = 0.0
-    last_advisor_cmd  = 0
-    last_cwd          = ""
-    last_ai_text      = ""
-    last_hint_check   = 0.0
-    rule_last_shown   = {}
-    _hint_thread      = None
-    _advisor_thread   = None
+    last_cmd_count        = 0
+    last_ai_call          = 0.0
+    last_advisor_call     = 0.0
+    last_advisor_cmd      = 0
+    last_cwd              = ""
+    last_ai_text          = ""
+    last_hint_check       = 0.0
+    rule_last_shown       = {}
+    _hint_thread          = None
+    _advisor_thread       = None
+    _post_mortem_thread   = None
+    _last_post_mortem_cmd = 0  # total_count at last post-mortem fire
 
     ctx_count = len(ctx_read(n=1000))
+    chain_str = " → ".join(HINT_MODEL_CHAIN) if HINT_BACKEND == "copilot" else HINT_MODEL
     print(f"shellbuddy daemon started (PID {os.getpid()})", flush=True)
     print(f"  available backends: {', '.join(sorted(_AVAILABLE_BACKENDS)) or 'none'}", flush=True)
-    print(f"  hint: {HINT_BACKEND} / {HINT_MODEL}"
+    print(f"  hint: {HINT_BACKEND} / {chain_str}"
           f"{'' if HINT_BACKEND in _AVAILABLE_BACKENDS else ' (NOT AVAILABLE)'}", flush=True)
     print(f"  /tip: {TIP_BACKEND} / {TIP_MODEL}"
           f"{'' if TIP_BACKEND in _AVAILABLE_BACKENDS else ' (NOT AVAILABLE)'}", flush=True)
+    print(f"  post-mortem: enabled (fires on git commit)", flush=True)
     print(f"  unified context: {ctx_count} entries loaded", flush=True)
     if _KB_ENGINE and _KB_ENGINE.loaded:
         print(f"  kb engine: {_KB_ENGINE.stats}", flush=True)
@@ -883,6 +987,19 @@ def run():
                     for c in new_cmds[-5:]:  # cap at 5 to avoid log spam on first run
                         ctx_append({"type": "cmd", "cmd": c.get("cmd", ""),
                                     "cwd": c.get("cwd", "")})
+
+                    # Post-mortem: fire on git commit (once per commit, not on every poll)
+                    if (_post_mortem_thread is None or not _post_mortem_thread.is_alive()):
+                        for c in new_cmds[-5:]:
+                            if _is_git_commit(c.get("cmd", "")) and current_count != _last_post_mortem_cmd:
+                                pm_cmds = [json.loads(l) for l in all_lines[-_POST_MORTEM_WINDOW:]
+                                           if l.strip()]
+                                def _run_pm(r=pm_cmds, d=cwd):
+                                    run_post_mortem(r, d)
+                                _post_mortem_thread = threading.Thread(target=_run_pm, daemon=True)
+                                _post_mortem_thread.start()
+                                _last_post_mortem_cmd = current_count
+                                break
 
                 # Layer 1b: ambient LLM hint — background thread, non-blocking
                 if ai_ready and (_hint_thread is None or not _hint_thread.is_alive()):
