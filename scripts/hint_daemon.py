@@ -1,99 +1,110 @@
 #!/usr/bin/env python3
 """
 shellbuddy — hint_daemon.py
-Ambient terminal coaching daemon.
+Ambient terminal coaching daemon. 3-layer architecture:
 
-Watches your command log, matches patterns against upgrade rules,
-and periodically queries an AI backend for contextual hints.
+  Layer 1 — Regex Reflex  (<10ms, instant rule hints)
+  Layer 2 — Async Advisor (gpt-4.1, every 5 cmds, builds persistent session context)
+  Layer 3 — /tip Expert   (gpt-4.1, on-demand, uses session context from Layer 2)
 
-Supports per-role backend configuration via ~/.shellbuddy/config.json:
+Config: ~/.shellbuddy/config.json
   {
-    "hint_backend": "ollama",   "hint_model": "qwen3:4b",
-    "tip_backend":  "claude",   "tip_model":  "claude-sonnet-4-5-20250514"
+    "hint_backend": "copilot", "hint_model": "gpt-4.1",
+    "tip_backend":  "copilot", "tip_model":  "gpt-4.1"
   }
 
-Backends: ollama, claude, copilot, openai (any OpenAI-compatible endpoint)
+Backends: ollama, claude, copilot, openai
 """
 
-import os, sys, time, json, subprocess, re, urllib.request, urllib.error
+import os, sys, time, json, subprocess, re, urllib.request, urllib.error, threading
 from pathlib import Path
-from collections import Counter
+from collections import Counter, deque
 from datetime import datetime
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CONFIG
 # ═══════════════════════════════════════════════════════════════════════════════
 
-DATA_DIR    = Path(os.environ.get("SHELLBUDDY_DIR", str(Path.home() / ".shellbuddy")))
-CONFIG_FILE = DATA_DIR / "config.json"
-CMD_LOG     = DATA_DIR / "cmd_log.jsonl"
-HINTS_OUT   = DATA_DIR / "current_hints.txt"
-LOCK_FILE   = DATA_DIR / "daemon.pid"
-TIP_QUERY   = DATA_DIR / "tip_query.txt"
-TIP_RESULT  = DATA_DIR / "tip_result.txt"
+DATA_DIR         = Path(os.environ.get("SHELLBUDDY_DIR", str(Path.home() / ".shellbuddy")))
+CONFIG_FILE      = DATA_DIR / "config.json"
+CMD_LOG          = DATA_DIR / "cmd_log.jsonl"
+HINTS_OUT        = DATA_DIR / "current_hints.txt"
+LOCK_FILE        = DATA_DIR / "daemon.pid"
+TIP_QUERY        = DATA_DIR / "tip_query.txt"
+TIP_RESULT       = DATA_DIR / "tip_result.txt"
+UNIFIED_CTX      = DATA_DIR / "unified_context.jsonl"  # single truth: rules+ambient+tips
 
 # Defaults (overridden by config.json)
-HINT_BACKEND    = "ollama"
-HINT_MODEL      = "qwen3:4b"
-TIP_BACKEND     = "ollama"
-TIP_MODEL       = "qwen3:8b"
+HINT_BACKEND    = "copilot"
+HINT_MODEL      = "gpt-4.1"
+TIP_BACKEND     = "copilot"
+TIP_MODEL       = "gpt-4.1"
 OLLAMA_URL      = "http://localhost:11434"
-CLAUDE_MODEL    = "claude-haiku-4-5-20251001"   # fallback for hint if claude chosen
+CLAUDE_MODEL    = "claude-haiku-4-5-20251001"
 COPILOT_MODEL   = "gpt-4.1"
 OPENAI_URL      = "https://api.openai.com/v1"
 OPENAI_MODEL    = "gpt-4o-mini"
 
-POLL_INTERVAL   = 1     # seconds between tip checks (fast response)
-HINT_INTERVAL   = 5     # seconds between hint log checks (background)
-AI_THROTTLE     = 25    # seconds between AI hint calls (not /tip)
-WINDOW          = 15    # last N commands to analyse
-MIN_COMMANDS    = 2     # don't hint until this many commands seen
-MAX_HINT_LINES  = 10    # lines in tmux pane (excluding header + separator)
-RULE_COOLDOWN   = 120   # seconds before re-showing the same rule hint
-OLLAMA_TIMEOUT  = 90    # seconds for ollama generate (cold model load is slow)
+POLL_INTERVAL    = 1      # seconds between tip checks
+HINT_INTERVAL    = 5      # seconds between hint log checks
+AI_THROTTLE      = 25     # seconds between ambient LLM hint calls
+ADVISOR_EVERY    = 1      # advisor fires every new command (debounced)
+ADVISOR_THROTTLE = 5      # min seconds between advisor calls
+WINDOW           = 50     # commands sent to ambient LLM
+ADVISOR_WINDOW   = 100    # commands the advisor sees
+MIN_COMMANDS     = 2
+MAX_HINT_LINES   = 10
+RULE_COOLDOWN    = 120
+OLLAMA_TIMEOUT   = 90
+CTX_MAX          = 200    # max lines kept in unified_context.jsonl
+CTX_INJECT       = 30     # last N unified context entries injected into prompts
 
-# Add repo root to path so we can import backends/
+# Add repo root to path so we can import backends/ and kb_engine
 _SCRIPT_DIR = Path(__file__).resolve().parent
 for _candidate in [_SCRIPT_DIR.parent, _SCRIPT_DIR]:
     if (_candidate / "backends").is_dir():
         sys.path.insert(0, str(_candidate))
         break
 
+# KB engine — try to load; falls back to legacy UPGRADE_RULES if kb.json absent
+_KB_ENGINE = None
+try:
+    from kb_engine import KBEngine as _KBEngine
+    _KB_ENGINE = _KBEngine()
+except Exception as _e:
+    print(f"  kb_engine not loaded ({_e}), using legacy rules", flush=True)
+
 
 def _load_config():
-    """Load config.json and override defaults."""
     global HINT_BACKEND, HINT_MODEL, TIP_BACKEND, TIP_MODEL
     global OLLAMA_URL, CLAUDE_MODEL, COPILOT_MODEL, OPENAI_URL, OPENAI_MODEL
 
     if not CONFIG_FILE.exists():
         return
-
     try:
         cfg = json.loads(CONFIG_FILE.read_text())
     except Exception as e:
         print(f"  warning: bad config.json — {e}", flush=True)
         return
 
-    HINT_BACKEND = cfg.get("hint_backend", HINT_BACKEND)
-    HINT_MODEL   = cfg.get("hint_model",   HINT_MODEL)
-    TIP_BACKEND  = cfg.get("tip_backend",  TIP_BACKEND)
-    TIP_MODEL    = cfg.get("tip_model",    TIP_MODEL)
-    OLLAMA_URL   = cfg.get("ollama_url",   OLLAMA_URL)
-    CLAUDE_MODEL = cfg.get("claude_model", CLAUDE_MODEL)
+    HINT_BACKEND  = cfg.get("hint_backend",  HINT_BACKEND)
+    HINT_MODEL    = cfg.get("hint_model",    HINT_MODEL)
+    TIP_BACKEND   = cfg.get("tip_backend",   TIP_BACKEND)
+    TIP_MODEL     = cfg.get("tip_model",     TIP_MODEL)
+    OLLAMA_URL    = cfg.get("ollama_url",    OLLAMA_URL)
+    CLAUDE_MODEL  = cfg.get("claude_model",  CLAUDE_MODEL)
     COPILOT_MODEL = cfg.get("copilot_model", COPILOT_MODEL)
-    OPENAI_URL   = cfg.get("openai_url",   OPENAI_URL)
-    OPENAI_MODEL = cfg.get("openai_model", OPENAI_MODEL)
+    OPENAI_URL    = cfg.get("openai_url",    OPENAI_URL)
+    OPENAI_MODEL  = cfg.get("openai_model",  OPENAI_MODEL)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  BACKEND AVAILABILITY (probe once at startup)
+#  BACKEND AVAILABILITY
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _AVAILABLE_BACKENDS = set()
 
 def _probe_backends():
-    """Check which backends are actually reachable."""
-    # Copilot
     try:
         from backends.copilot import is_available as copilot_available
         if copilot_available():
@@ -101,7 +112,6 @@ def _probe_backends():
     except Exception:
         pass
 
-    # Claude — check for API key
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         try:
@@ -117,11 +127,9 @@ def _probe_backends():
         _AVAILABLE_BACKENDS.add("claude")
         os.environ["_SB_CLAUDE_KEY"] = api_key
 
-    # OpenAI-compatible — check for API key
     if os.environ.get("OPENAI_API_KEY", ""):
         _AVAILABLE_BACKENDS.add("openai")
 
-    # Ollama — check if server responds
     try:
         urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=3)
         _AVAILABLE_BACKENDS.add("ollama")
@@ -130,11 +138,20 @@ def _probe_backends():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  UPGRADE RULES — (regex, hint_template)
-#  {arg} is replaced with the first argument the user passed.
+#  LAYER 1 — UPGRADE RULES (regex reflex, <10ms)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 UPGRADE_RULES = [
+    # ── Safety / precondition warnings ───────────────────────────────────────
+    (r"^rm\s+-rf\s+[/~]\s*$",       "DANGER: rm -rf / or ~ — this will destroy your system"),
+    (r"^rm\s+-rf\s+\.\s*$",         "DANGER: rm -rf . deletes everything in current dir"),
+    (r"^git\s+commit\s+(?!.*-m\b)", "git commit: missing -m flag — add a message"),
+    (r"^npm\s+install\b",           "npm install: check package.json exists first (ls package.json)"),
+    (r"^pip\s+install\b(?!.*\s-r)", "pip install: outside a conda/venv env? (conda activate <env>)"),
+    (r"^git\s+push.*--force\b",     "git push --force: prefer --force-with-lease (safer)"),
+    (r"^chmod\s+777\b",             "chmod 777: overly permissive — prefer 755 (dirs) or 644 (files)"),
+    (r"^sudo\s+rm\b",               "sudo rm: double-check path before running as root"),
+
     # ── Navigation ───────────────────────────────────────────────────────────
     (r"^cd\s+",              "cd → z {arg}  (zoxide: learns your paths)"),
     (r"^pushd\b",            "pushd → z -  (zoxide: go back)"),
@@ -248,10 +265,10 @@ UPGRADE_RULES = [
     (r"^cloc\b",             "cloc → tokei  (10x faster, same output)"),
     (r"^sed\s+",             "sed → sd '{arg}'  (simpler regex replace)"),
     (r"^rename\b.*\.",       "try: rename with regex — rename 's/old/new/' *"),
-    (r"^tar\s+.*xf",        "tip: tar xf auto-detects .gz .bz2 .xz (no flags)"),
+    (r"^tar\s+.*xf",         "tip: tar xf auto-detects .gz .bz2 .xz (no flags)"),
     (r"^zip\s+",             "also: tar czf archive.tar.gz dir/  (more unix)"),
 
-    # ── Benchmarking & profiling ─────────────────────────────────────────────
+    # ── Benchmarking ─────────────────────────────────────────────────────────
     (r"^time\s+",            "time → hyperfine '{arg}'  (statistical benchmark)"),
 
     # ── macOS-specific ───────────────────────────────────────────────────────
@@ -263,7 +280,7 @@ UPGRADE_RULES = [
     (r"^diskutil\b",         "tip: diskutil list for all disks, info for detail"),
     (r"^launchctl\b",        "tip: launchctl list | rg <name> to find services"),
 
-    # ── VHDL / FPGA ─────────────────────────────────────────────────────────
+    # ── VHDL / FPGA ──────────────────────────────────────────────────────────
     (r"^ghdl\s+",            "ghdl → make  (Makefile for reproducible GHDL runs)"),
     (r"^gtkwave\s+",         "gtkwave → add sim target to Makefile"),
     (r"^vivado\b",           "vivado → Tcl batch mode for repeatable builds"),
@@ -272,6 +289,7 @@ UPGRADE_RULES = [
     (r"^cat\s+.*\.md\b",     "cat .md → glow {arg}  (rendered Markdown in terminal)"),
     (r"^pdftotext\b",        "pdftotext → pdfgrep {arg}  (search inside PDFs)"),
 ]
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  PROJECT TYPE DETECTION
@@ -292,12 +310,12 @@ PROJECT_INDICATORS = [
     (".git",               "git repo"),
 ]
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  AI BACKENDS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _call_copilot(prompt, model=None):
-    """Call Copilot backend."""
     try:
         from backends.copilot import call_copilot
         return call_copilot(prompt, model=model or COPILOT_MODEL)
@@ -306,7 +324,6 @@ def _call_copilot(prompt, model=None):
 
 
 def _call_claude(prompt, model=None):
-    """Call Claude API backend."""
     api_key = os.environ.get("_SB_CLAUDE_KEY", "") or os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         return None
@@ -339,9 +356,7 @@ def _call_claude(prompt, model=None):
 
 
 def _call_ollama(prompt, model=None):
-    """Call Ollama backend with thinking support."""
     model = model or TIP_MODEL
-    # Enable thinking for qwen3/deepseek-r1 models
     think = any(t in model for t in ["qwen3", "deepseek-r1"])
     options = {"temperature": 0.7 if think else 0.3, "num_predict": 800 if think else 500}
 
@@ -361,8 +376,6 @@ def _call_ollama(prompt, model=None):
         )
         with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:
             text = json.loads(resp.read()).get("response", "").strip()
-
-        # Strip <think>...</think> reasoning blocks (qwen3, deepseek-r1)
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
         return text
     except Exception as e:
@@ -371,7 +384,6 @@ def _call_ollama(prompt, model=None):
 
 
 def _call_openai(prompt, model=None):
-    """Call any OpenAI-compatible endpoint (OpenAI, Groq, Together, etc.)."""
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         return None
@@ -403,7 +415,6 @@ def _call_openai(prompt, model=None):
 
 
 def _call_backend(backend, prompt, model=None):
-    """Route a prompt to the specified backend."""
     if backend == "copilot":
         return _call_copilot(prompt, model=model)
     elif backend == "claude":
@@ -416,25 +427,145 @@ def _call_backend(backend, prompt, model=None):
 
 
 def call_ai_hint(prompt):
-    """Call the hint backend (ambient hints in tmux pane)."""
     if HINT_BACKEND not in _AVAILABLE_BACKENDS:
         return ""
     return _call_backend(HINT_BACKEND, prompt, model=HINT_MODEL) or ""
 
 
 def call_ai_tip(prompt):
-    """Call the tip backend (/tip on-demand queries)."""
     if TIP_BACKEND not in _AVAILABLE_BACKENDS:
         return ""
     return _call_backend(TIP_BACKEND, prompt, model=TIP_MODEL) or ""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  HINT PROMPT BUILDER
+#  UNIFIED CONTEXT LOG
+#  Single append-only JSONL. Every event written here:
+#    {"ts":"18:31","type":"cmd",     "cmd":"git push --force"}
+#    {"ts":"18:31","type":"rule",    "severity":"danger","hint":"...","detail":"..."}
+#    {"ts":"18:31","type":"ambient", "text":"..."}
+#    {"ts":"18:32","type":"advisor", "intent":"...","observation":"...","prediction":"..."}
+#    {"ts":"18:33","type":"tip_q",   "query":"..."}
+#    {"ts":"18:33","type":"tip_a",   "text":"..."}
+#  Both ambient LLM and /tip read this for context. Ring-trimmed to CTX_MAX lines.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_ctx_lock = threading.Lock()
+
+
+def ctx_append(entry: dict):
+    """Append one event to unified_context.jsonl. Thread-safe. Trims to CTX_MAX."""
+    entry["ts"] = datetime.now().strftime("%H:%M:%S")
+    line = json.dumps(entry, separators=(",", ":"))
+    with _ctx_lock:
+        try:
+            existing = UNIFIED_CTX.read_text().splitlines() if UNIFIED_CTX.exists() else []
+            existing.append(line)
+            if len(existing) > CTX_MAX:
+                existing = existing[-CTX_MAX:]
+            tmp = UNIFIED_CTX.with_suffix(".tmp")
+            tmp.write_text("\n".join(existing) + "\n")
+            tmp.rename(UNIFIED_CTX)
+        except Exception as e:
+            print(f"  ctx_append error: {e}", flush=True)
+
+
+def ctx_read(n=CTX_INJECT) -> list[dict]:
+    """Return last n entries from unified_context.jsonl as parsed dicts."""
+    if not UNIFIED_CTX.exists():
+        return []
+    try:
+        lines = UNIFIED_CTX.read_text().strip().splitlines()
+        out = []
+        for l in lines[-n:]:
+            try:
+                out.append(json.loads(l))
+            except Exception:
+                pass
+        return out
+    except Exception:
+        return []
+
+
+def ctx_to_prompt_block(entries: list[dict]) -> str:
+    """Format unified context entries into a readable prompt block."""
+    lines = []
+    for e in entries:
+        t = e.get("ts", "")
+        typ = e.get("type", "")
+        if typ == "cmd":
+            lines.append(f"[{t}] ran: {e.get('cmd','')}")
+        elif typ == "rule":
+            lines.append(f"[{t}] rule({e.get('severity','')}) {e.get('hint','')}")
+        elif typ == "ambient":
+            lines.append(f"[{t}] ambient: {e.get('text','')[:100]}")
+        elif typ == "advisor":
+            lines.append(f"[{t}] intent: {e.get('intent','')}")
+            if e.get("observation"):
+                lines.append(f"[{t}] note: {e.get('observation','')}")
+            if e.get("prediction"):
+                lines.append(f"[{t}] next: {e.get('prediction','')}")
+        elif typ == "tip_q":
+            lines.append(f"[{t}] /tip asked: {e.get('query','')}")
+        elif typ == "tip_a":
+            lines.append(f"[{t}] /tip answer: {e.get('text','')[:150]}")
+    return "\n".join(lines)
+
+
+# ── Advisor ───────────────────────────────────────────────────────────────────
+
+def build_advisor_prompt(recent_cmds, cwd, ctx_block):
+    last_cmd = recent_cmds[-1].get("cmd", "") if recent_cmds else ""
+    cmd_summary = "\n".join(
+        f"  {c.get('ts','')[-8:]}  {c.get('cmd','')}" for c in recent_cmds[-ADVISOR_WINDOW:]
+    )
+    cwd_short = str(Path(cwd)).replace(str(Path.home()), "~")
+
+    prompt = (
+        "You are an opinionated terminal session advisor. The user just ran a command.\n"
+        "Form a quick view on what they're doing and what comes next — even if guessing.\n\n"
+        f"Working directory: {cwd_short}\n"
+        f"Last command: {last_cmd}\n"
+    )
+    if ctx_block:
+        prompt += f"\nRecent session context (commands, hints, tips seen):\n{ctx_block}\n"
+    prompt += (
+        f"\nFull command history (oldest→newest):\n{cmd_summary}\n\n"
+        "Output exactly 3 lines, plain text, no labels, no bullets:\n"
+        "Line 1: What the user is currently trying to do (≤10 words, specific)\n"
+        "Line 2: A pattern, risk, or struggle you notice (direct opinion)\n"
+        "Line 3: Your best prediction of their next command or action\n"
+    )
+    return prompt
+
+
+def run_advisor(recent_cmds, cwd):
+    """Layer 2: background thread. Calls AI, writes to unified context log."""
+    try:
+        ctx_entries = ctx_read(n=20)
+        ctx_block = ctx_to_prompt_block(ctx_entries)
+        prompt = build_advisor_prompt(recent_cmds, cwd, ctx_block)
+        result = _call_backend(HINT_BACKEND, prompt, model=HINT_MODEL)
+        if not result:
+            return
+        lines = [l.strip() for l in result.strip().splitlines() if l.strip()]
+        entry = {
+            "type":       "advisor",
+            "intent":     lines[0] if len(lines) > 0 else "",
+            "observation":lines[1] if len(lines) > 1 else "",
+            "prediction": lines[2] if len(lines) > 2 else "",
+        }
+        ctx_append(entry)
+        print(f"  advisor: {entry['intent'][:60]}", flush=True)
+    except Exception as e:
+        print(f"  advisor error: {e}", flush=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  LAYER 1 — HINT PROMPT BUILDER
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _detect_intent(cmds):
-    """Infer what the user is trying to do from recent commands."""
     texts = [c.get("cmd", "") for c in cmds[-6:]]
     joined = " ".join(texts).lower()
 
@@ -465,26 +596,29 @@ def build_hint_prompt(recent_cmds, cwd):
     cmd_summary = "\n".join(
         f"  {c.get('ts', '')[-8:]}  {c.get('cmd', '')}" for c in recent_cmds[-10:]
     )
-
     project_ctx = ", ".join(dict.fromkeys(project_signals)) or "general"
     intent = _detect_intent(recent_cmds)
 
+    # Inject unified context — gives LLM awareness of prior hints and /tip Q&A
+    ctx_block = ctx_to_prompt_block(ctx_read(n=CTX_INJECT))
+
     prompt = (
         "You are an ambient terminal coach. A developer is working in their shell.\n"
-        "Analyse their recent commands, understand what they're trying to do, "
-        "and give 2-3 SPECIFIC, actionable hints to help them work faster.\n\n"
+        "Give 2-3 SPECIFIC, actionable hints. Avoid repeating hints already shown.\n\n"
         f"Directory: {cwd}\n"
         f"Project: {project_ctx}\n"
     )
     if intent:
-        prompt += f"They appear to be: {intent}\n"
+        prompt += f"Current activity: {intent}\n"
+    if ctx_block:
+        prompt += f"\nSession history (commands, prior hints, /tip answers):\n{ctx_block}\n"
     prompt += (
-        f"Recent commands (oldest to newest):\n{cmd_summary}\n\n"
+        f"\nRecent commands (oldest→newest):\n{cmd_summary}\n\n"
         "Rules:\n"
-        "- Each hint on ONE line, max 70 chars\n"
-        "- Use exact paths/filenames from their commands\n"
-        "- Prioritise: faster alternatives, missing flags, common mistakes\n"
-        "- If they're retrying something, suggest what might fix it\n"
+        "- ONE line per hint, max 70 chars\n"
+        "- Use exact filenames/paths from their commands\n"
+        "- Prioritise: faster alternatives, missing flags, footguns\n"
+        "- Don't repeat what's already in session history above\n"
         "- No bullets, no markdown, no greetings\n"
         "- Max 5 lines total\n"
         "- If workflow looks fine: Good flow — keep going\n"
@@ -493,48 +627,62 @@ def build_hint_prompt(recent_cmds, cwd):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  /tip QUERY HANDLER
+#  LAYER 3 — /tip QUERY HANDLER
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def build_tip_prompt(query):
-    # Gather context for richer answers
     cwd = "~"
     shell_info = "zsh on macOS"
-    recent_ctx = ""
+    recent_cmds_str = ""
     try:
         if CMD_LOG.exists():
             lines = CMD_LOG.read_text().strip().splitlines()[-5:]
             recent = [json.loads(l) for l in lines if l.strip()]
             if recent:
                 cwd = recent[-1].get("cwd", "~")
-                recent_ctx = "\n".join(f"  {c.get('cmd', '')}" for c in recent)
+                recent_cmds_str = "\n".join(f"  {c.get('cmd', '')}" for c in recent)
     except Exception:
         pass
 
+    # Unified context: commands + prior rule hints + ambient answers + past /tip Q&A
+    ctx_entries = ctx_read(n=CTX_INJECT)
+    ctx_block = ctx_to_prompt_block(ctx_entries)
+
+    # KB detail injection — expert man-page knowledge for recently matched rules
+    kb_ctx = ""
+    if _KB_ENGINE and _KB_ENGINE.loaded:
+        try:
+            if CMD_LOG.exists():
+                all_lines = CMD_LOG.read_text().strip().splitlines()
+                kb_recent = [json.loads(l) for l in all_lines[-20:] if l.strip()]
+                kb_ctx = _KB_ENGINE.get_detail_context(kb_recent, n=3)
+        except Exception:
+            pass
+
     prompt = (
-        "You are a senior terminal/CLI expert. Think carefully about the question, "
-        "then give a precise, practical answer.\n\n"
+        "You are a senior terminal/CLI expert. Give a precise, practical answer.\n\n"
         f"Environment: {shell_info}\n"
         f"Working directory: {cwd}\n"
     )
-    if recent_ctx:
-        prompt += f"Recent commands (for context):\n{recent_ctx}\n"
+    if ctx_block:
+        prompt += f"\nSession history (commands, hints, prior /tip answers):\n{ctx_block}\n"
+    if kb_ctx:
+        prompt += f"\nKB matched rules (expert context):\n{kb_ctx}\n"
+    if recent_cmds_str:
+        prompt += f"\nLast 5 commands:\n{recent_cmds_str}\n"
     prompt += (
         "\nRules:\n"
-        "- Give the exact command(s) first, then a brief explanation\n"
-        "- For multi-step tasks, number the steps\n"
-        "- Show common flags and variations when relevant\n"
-        "- If the question relates to the recent commands above, use that context\n"
-        "- Max 15 lines total\n"
-        "- No markdown formatting, no code fences\n"
-        "- Use macOS/zsh conventions\n\n"
+        "- Exact command(s) first, brief explanation after\n"
+        "- Number steps for multi-step tasks\n"
+        "- Use session history for context — don't repeat advice already given\n"
+        "- Max 15 lines, no markdown, no code fences\n"
+        "- macOS/zsh conventions\n\n"
         f"Question: {query}\n"
     )
     return prompt
 
 
 def handle_tip_query():
-    """Check for a pending /tip query and process it."""
     if not TIP_QUERY.exists():
         return False
     try:
@@ -545,10 +693,12 @@ def handle_tip_query():
 
         print(f"  /tip query: {query!r}", flush=True)
 
-        # Check if backend is available
+        # Log the question to unified context immediately
+        ctx_append({"type": "tip_q", "query": query})
+
         if TIP_BACKEND not in _AVAILABLE_BACKENDS:
             TIP_RESULT.write_text(
-                f"[{TIP_BACKEND} not available — check config.json or start ollama]"
+                f"[{TIP_BACKEND} not available — check config.json]"
             )
             return True
 
@@ -557,7 +707,9 @@ def handle_tip_query():
         if not result:
             result = f"[{TIP_BACKEND}:{TIP_MODEL} returned empty — check: hints-log]"
 
-        # Atomic write: tmp → rename
+        # Log the answer to unified context
+        ctx_append({"type": "tip_a", "text": result[:300]})
+
         tmp = TIP_RESULT.with_suffix(".tmp")
         tmp.write_text(result)
         tmp.rename(TIP_RESULT)
@@ -570,10 +722,17 @@ def handle_tip_query():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  RULE HINTS
+#  LAYER 1 — RULE HINTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_rule_hints(recent_cmds, last_shown):
+    # Delegate to KB engine if loaded (dispatcher architecture, sub-ms per cmd)
+    if _KB_ENGINE and _KB_ENGINE.loaded:
+        results = _KB_ENGINE.get_hints(recent_cmds, last_shown, cooldown=RULE_COOLDOWN)
+        # results is list of (rule_id, hint_str, entry) — return (id, hint_str) tuples
+        return [(rid, hint_str) for rid, hint_str, _ in results]
+
+    # Legacy fallback: flat UPGRADE_RULES scan
     cmd_texts = [c.get("cmd", "") for c in recent_cmds]
     freq = Counter()
     matches = {}
@@ -613,7 +772,6 @@ def write_hints(rule_hints, ai_hints, cwd, cmd_count, thinking=False):
         lines.append(h)
 
     if thinking and not ai_hints:
-        # Show thinking indicator while AI is processing
         if hint_strs:
             lines.append("·")
         lines.append("thinking ...")
@@ -639,34 +797,38 @@ def run():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     LOCK_FILE.write_text(str(os.getpid()))
 
-    # Load config and probe available backends
     _load_config()
     _probe_backends()
 
-    last_cmd_count  = 0
-    last_ai_call    = 0.0
-    last_cwd        = ""
-    last_ai_text    = ""
-    last_hint_check = 0.0
-    rule_last_shown = {}
+    last_cmd_count    = 0
+    last_ai_call      = 0.0
+    last_advisor_call = 0.0
+    last_advisor_cmd  = 0
+    last_cwd          = ""
+    last_ai_text      = ""
+    last_hint_check   = 0.0
+    rule_last_shown   = {}
+    _hint_thread      = None
+    _advisor_thread   = None
 
+    ctx_count = len(ctx_read(n=1000))
     print(f"shellbuddy daemon started (PID {os.getpid()})", flush=True)
     print(f"  available backends: {', '.join(sorted(_AVAILABLE_BACKENDS)) or 'none'}", flush=True)
     print(f"  hint: {HINT_BACKEND} / {HINT_MODEL}"
           f"{'' if HINT_BACKEND in _AVAILABLE_BACKENDS else ' (NOT AVAILABLE)'}", flush=True)
     print(f"  /tip: {TIP_BACKEND} / {TIP_MODEL}"
           f"{'' if TIP_BACKEND in _AVAILABLE_BACKENDS else ' (NOT AVAILABLE)'}", flush=True)
+    print(f"  unified context: {ctx_count} entries loaded", flush=True)
+    if _KB_ENGINE and _KB_ENGINE.loaded:
+        print(f"  kb engine: {_KB_ENGINE.stats}", flush=True)
     if not _AVAILABLE_BACKENDS:
-        print(f"  WARNING: no AI backend available — /tip will not work", flush=True)
-        print(f"  start ollama:  brew services start ollama", flush=True)
-        print(f"  or configure:  edit {CONFIG_FILE}", flush=True)
+        print(f"  WARNING: no AI backend available", flush=True)
 
     try:
         while True:
-            # Handle /tip queries with priority — check every POLL_INTERVAL
+            # Layer 3: /tip has highest priority
             handle_tip_query()
 
-            # Hint generation runs less frequently
             now = time.time()
             if (now - last_hint_check) < HINT_INTERVAL:
                 time.sleep(POLL_INTERVAL)
@@ -678,34 +840,83 @@ def run():
                 continue
 
             try:
-                lines = CMD_LOG.read_text().strip().splitlines()[-WINDOW:]
-                recent = [json.loads(l) for l in lines if l.strip()]
+                all_lines = CMD_LOG.read_text().strip().splitlines()
+                total_count = len(all_lines)
+                recent    = [json.loads(l) for l in all_lines[-WINDOW:]        if l.strip()]
+                all_recent = [json.loads(l) for l in all_lines[-ADVISOR_WINDOW:] if l.strip()]
             except Exception:
                 time.sleep(POLL_INTERVAL)
                 continue
 
-            current_count = len(recent)
+            current_count = total_count
             cwd = recent[-1].get("cwd", str(Path.home())) if recent else str(Path.home())
 
             has_new     = current_count != last_cmd_count
             cwd_changed = cwd != last_cwd
-            ai_ready    = (time.time() - last_ai_call) > AI_THROTTLE
+            ai_ready    = (now - last_ai_call) > AI_THROTTLE
 
             if (has_new or cwd_changed) and current_count >= MIN_COMMANDS:
+
+                # Layer 1a: regex rules — instant, log matched rules to unified context
                 rule_hints = get_rule_hints(recent, rule_last_shown)
+                for rid, _ in rule_hints:
+                    rule_last_shown[rid] = time.time()
+                    # Write matched rule to unified context (with detail if KB engine)
+                    if _KB_ENGINE and _KB_ENGINE.loaded:
+                        # find entry by id
+                        for entry in (_KB_ENGINE._buckets.get(rid.split("-")[0], []) +
+                                      _KB_ENGINE._generic):
+                            if entry[1].get("id") == rid:
+                                ctx_append({
+                                    "type": "rule", "id": rid,
+                                    "severity": entry[1].get("severity", "tip"),
+                                    "hint":   entry[1].get("hint", ""),
+                                    "detail": entry[1].get("detail", ""),
+                                })
+                                break
+                    else:
+                        ctx_append({"type": "rule", "id": rid, "hint": _})
 
-                for pattern, _ in rule_hints:
-                    rule_last_shown[pattern] = time.time()
+                # Log new commands to unified context
+                if has_new:
+                    new_cmds = recent[-(current_count - last_cmd_count):]
+                    for c in new_cmds[-5:]:  # cap at 5 to avoid log spam on first run
+                        ctx_append({"type": "cmd", "cmd": c.get("cmd", ""),
+                                    "cwd": c.get("cwd", "")})
 
-                if ai_ready and (has_new or cwd_changed):
-                    # Show rules + "thinking..." immediately
-                    write_hints(rule_hints, "", cwd, current_count, thinking=True)
+                # Layer 1b: ambient LLM hint — background thread, non-blocking
+                if ai_ready and (_hint_thread is None or not _hint_thread.is_alive()):
+                    write_hints(rule_hints, last_ai_text, cwd, current_count, thinking=True)
 
-                    prompt = build_hint_prompt(recent, cwd)
-                    last_ai_text = call_ai_hint(prompt)
-                    last_ai_call = time.time()
+                    def _run_hint(r=recent, c=cwd, cc=current_count):
+                        nonlocal last_ai_text, last_ai_call
+                        result = call_ai_hint(build_hint_prompt(r, c))
+                        if result:
+                            last_ai_text = result
+                            ctx_append({"type": "ambient", "text": result[:300]})
+                        last_ai_call = time.time()
+                        write_hints(get_rule_hints(r, rule_last_shown),
+                                    last_ai_text, c, cc)
 
-                write_hints(rule_hints, last_ai_text, cwd, current_count)
+                    _hint_thread = threading.Thread(target=_run_hint, daemon=True)
+                    _hint_thread.start()
+                else:
+                    write_hints(rule_hints, last_ai_text, cwd, current_count)
+
+                # Layer 2: advisor — debounced, writes intent/prediction to unified context
+                cmds_since_advisor = current_count - last_advisor_cmd
+                advisor_ready = (now - last_advisor_call) > ADVISOR_THROTTLE
+                if (cmds_since_advisor >= ADVISOR_EVERY and advisor_ready and
+                        (_advisor_thread is None or not _advisor_thread.is_alive())):
+
+                    def _run_advisor(r=all_recent, c=cwd):
+                        run_advisor(r, c)
+
+                    _advisor_thread = threading.Thread(target=_run_advisor, daemon=True)
+                    _advisor_thread.start()
+                    last_advisor_call = now
+                    last_advisor_cmd  = current_count
+
                 last_cmd_count = current_count
                 last_cwd = cwd
 

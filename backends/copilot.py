@@ -103,7 +103,7 @@ def get_copilot_token():
         return None, None
 
 
-def call_copilot(prompt, model="gpt-4.1"):
+def call_copilot(prompt, model="gpt-4.1", max_tokens=150):
     """Send a prompt to the Copilot chat completions API. Returns None on failure."""
     token, api_url = get_copilot_token()
     if not token:
@@ -112,7 +112,7 @@ def call_copilot(prompt, model="gpt-4.1"):
     body = json.dumps({
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 150,
+        "max_tokens": max_tokens,
         "temperature": 0.3,
     }).encode()
 
@@ -127,7 +127,8 @@ def call_copilot(prompt, model="gpt-4.1"):
     try:
         req = urllib.request.Request(f"{api_url}/chat/completions",
             data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        timeout = 120 if max_tokens > 500 else 15
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read())["choices"][0]["message"]["content"].strip()
     except urllib.error.HTTPError as e:
         if e.code == 401:

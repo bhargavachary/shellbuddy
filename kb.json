@@ -1,0 +1,782 @@
+[
+  {
+    "id": "git-001",
+    "pattern": "^git\\s+push\\s+--force(\\s|$)",
+    "cmd": "git",
+    "severity": "danger",
+    "hint": "Use --force-with-lease instead of --force to avoid overwriting others.",
+    "detail": "Using 'git push --force' can overwrite commits on the remote, potentially deleting teammates' work. '--force-with-lease' checks for upstream changes before pushing, reducing the risk of accidental data loss. Always prefer '--force-with-lease' for safer force-pushes.",
+    "tags": [
+      "push",
+      "safety",
+      "collaboration"
+    ]
+  },
+  {
+    "id": "git-002",
+    "pattern": "^git\\s+commit\\s+-a(\\s|$)",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "Remember -a skips untracked files; use 'git add' for new files.",
+    "detail": "'git commit -a' stages and commits only modified and deleted files that are already tracked. Untracked files are ignored, which can lead to missing new files in commits. Always use 'git add' to include new files before committing.",
+    "tags": [
+      "commit",
+      "staging",
+      "untracked"
+    ]
+  },
+  {
+    "id": "git-003",
+    "pattern": "^git\\s+merge\\s+--no-ff(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use --no-ff to preserve branch history in merges.",
+    "detail": "The '--no-ff' flag creates a merge commit even if a fast-forward is possible, making the branch structure explicit in history. This is useful for preserving context in feature branches, especially in collaborative workflows.",
+    "tags": [
+      "merge",
+      "history",
+      "workflow"
+    ]
+  },
+  {
+    "id": "git-004",
+    "pattern": "^git\\s+pull(\\s|$)",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "Use 'git pull --rebase' to avoid unnecessary merge commits.",
+    "detail": "By default, 'git pull' performs a merge, which can clutter history with unnecessary merge commits. Using '--rebase' applies your local commits on top of the upstream changes, resulting in a cleaner, linear history. Configure with 'git config pull.rebase true' for consistency.",
+    "tags": [
+      "pull",
+      "rebase",
+      "history"
+    ]
+  },
+  {
+    "id": "git-005",
+    "pattern": "^git\\s+add\\s+\\.",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "Review staged changes with 'git status' before committing.",
+    "detail": "'git add .' stages all changes in the current directory, including unintended files. This can lead to committing sensitive or unrelated files. Always check 'git status' before committing to verify what will be included.",
+    "tags": [
+      "add",
+      "staging",
+      "safety"
+    ]
+  },
+  {
+    "id": "git-006",
+    "pattern": "^git\\s+commit\\s+-m\\s+\"?\\s*\"?$",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "Avoid empty commit messages; provide a descriptive summary.",
+    "detail": "Empty commit messages hinder understanding of project history and make debugging difficult. Always provide a concise, meaningful message summarizing the change. Some hooks or CI systems may reject empty messages.",
+    "tags": [
+      "commit",
+      "message",
+      "best-practice"
+    ]
+  },
+  {
+    "id": "git-007",
+    "pattern": "^git\\s+rebase\\s+-i\\s+origin/",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use interactive rebase to squash or reorder commits before merging.",
+    "detail": "Interactive rebasing ('-i') allows you to edit, squash, or reorder commits, producing a cleaner, more logical history. This is especially useful before merging a feature branch into main. Be cautious: rebasing rewrites history.",
+    "tags": [
+      "rebase",
+      "history",
+      "squash"
+    ]
+  },
+  {
+    "id": "git-008",
+    "pattern": "^git\\s+stash\\s+pop(\\s|$)",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "Use 'git stash apply' to keep stash after applying changes.",
+    "detail": "'git stash pop' applies the latest stash and then deletes it. If a conflict occurs, the stash is still dropped, risking data loss. Use 'git stash apply' to apply changes without removing the stash, allowing recovery if needed.",
+    "tags": [
+      "stash",
+      "safety",
+      "conflict"
+    ]
+  },
+  {
+    "id": "git-009",
+    "pattern": "^git\\s+fetch(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--prune' to remove deleted remote branches locally.",
+    "detail": "'git fetch --prune' cleans up references to branches that have been deleted on the remote. This keeps your local repository tidy and prevents confusion from stale branch references. Set 'fetch.prune' to true for automatic pruning.",
+    "tags": [
+      "fetch",
+      "prune",
+      "maintenance"
+    ]
+  },
+  {
+    "id": "git-010",
+    "pattern": "^git\\s+log(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--oneline --graph' for a concise, visual commit history.",
+    "detail": "'git log --oneline --graph' provides a compact, visual representation of the commit history, making it easier to understand branching and merges. Combine with '--decorate' for branch/tag names.",
+    "tags": [
+      "log",
+      "visualization",
+      "history"
+    ]
+  },
+  {
+    "id": "git-011",
+    "pattern": "^git\\s+diff(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--color-words' for word-level diff highlighting.",
+    "detail": "'git diff --color-words' highlights changes at the word level, making it easier to spot small edits within lines. This is especially useful for prose or documentation changes.",
+    "tags": [
+      "diff",
+      "visualization",
+      "usability"
+    ]
+  },
+  {
+    "id": "git-012",
+    "pattern": "^git\\s+blame(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '-w' to ignore whitespace when blaming lines.",
+    "detail": "'git blame -w' ignores whitespace changes, attributing lines to the last non-whitespace edit. This helps avoid misleading blame results when code is reformatted.",
+    "tags": [
+      "blame",
+      "whitespace",
+      "history"
+    ]
+  },
+  {
+    "id": "git-013",
+    "pattern": "^git\\s+tag\\s+-d\\s+",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "Deleting a tag locally doesn't remove it from remotes.",
+    "detail": "'git tag -d <tag>' deletes a tag only in your local repository. To remove it from remotes, use 'git push --delete <remote> <tag>'. Otherwise, the tag will persist for others.",
+    "tags": [
+      "tag",
+      "delete",
+      "remote"
+    ]
+  },
+  {
+    "id": "git-014",
+    "pattern": "^git\\s+push\\s+--tags(\\s|$)",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "Pushing all tags may include unintended or test tags.",
+    "detail": "'git push --tags' pushes all local tags to the remote, including those not meant for sharing. Review your tags with 'git tag' and push only the intended ones using 'git push <remote> <tag>' if necessary.",
+    "tags": [
+      "push",
+      "tag",
+      "review"
+    ]
+  },
+  {
+    "id": "git-015",
+    "pattern": "^git\\s+checkout\\s+[^\\s]+(\\s|$)",
+    "cmd": "git",
+    "severity": "upgrade",
+    "hint": "Use 'git switch' for branches and 'git restore' for files.",
+    "detail": "'git checkout' is overloaded for both branch switching and file restoration. The newer 'git switch' and 'git restore' commands are more explicit and user-friendly, reducing accidental mistakes.",
+    "tags": [
+      "checkout",
+      "switch",
+      "restore"
+    ]
+  },
+  {
+    "id": "git-016",
+    "pattern": "^git\\s+merge\\s+--squash(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Squash merges combine changes but don't record merge info.",
+    "detail": "'git merge --squash' applies all changes from the branch as a single commit, but does not create a merge commit. The branch relationship is not recorded in history, which may impact traceability.",
+    "tags": [
+      "merge",
+      "squash",
+      "history"
+    ]
+  },
+  {
+    "id": "git-017",
+    "pattern": "^git\\s+rebase\\s+--onto\\s+",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use --onto for advanced rebasing between arbitrary bases.",
+    "detail": "'git rebase --onto <newbase> <upstream> <branch>' allows you to transplant a branch onto a new base, skipping certain commits. This is powerful for complex history rewriting and splitting feature branches.",
+    "tags": [
+      "rebase",
+      "advanced",
+      "history"
+    ]
+  },
+  {
+    "id": "git-018",
+    "pattern": "^git\\s+reset\\s+--hard(\\s|$)",
+    "cmd": "git",
+    "severity": "danger",
+    "hint": "Hard reset discards all local changes irreversibly.",
+    "detail": "'git reset --hard' resets the index and working tree to match the specified commit, deleting all uncommitted changes. This action cannot be undone unless you have backups or stashes.",
+    "tags": [
+      "reset",
+      "danger",
+      "data-loss"
+    ]
+  },
+  {
+    "id": "git-019",
+    "pattern": "^git\\s+clean\\s+-fd(\\s|$)",
+    "cmd": "git",
+    "severity": "danger",
+    "hint": "Clean -fd deletes untracked files and directories permanently.",
+    "detail": "'git clean -fd' removes all untracked files and directories in the working tree. There is no undo. Use 'git clean -nfd' to preview what will be deleted before running.",
+    "tags": [
+      "clean",
+      "danger",
+      "untracked"
+    ]
+  },
+  {
+    "id": "git-020",
+    "pattern": "^git\\s+cherry-pick\\s+",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "Cherry-picking can duplicate commits; check for conflicts.",
+    "detail": "'git cherry-pick' applies commits from another branch onto your current branch. If the commits already exist in the target branch, this can create duplicate history and conflicts. Always review the commit graph before cherry-picking.",
+    "tags": [
+      "cherry-pick",
+      "conflict",
+      "history"
+    ]
+  },
+  {
+    "id": "git-021",
+    "pattern": "^git\\s+rebase\\s+--skip(\\s|$)",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "Skipping a commit during rebase may drop important changes.",
+    "detail": "'git rebase --skip' omits the current patch, which can result in lost changes if used unintentionally. Always check the reason for the conflict before skipping, and consider resolving instead.",
+    "tags": [
+      "rebase",
+      "skip",
+      "conflict"
+    ]
+  },
+  {
+    "id": "git-022",
+    "pattern": "^git\\s+pull\\s+--rebase(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Set 'pull.rebase=true' to make rebase the default for pulls.",
+    "detail": "Setting 'git config --global pull.rebase true' makes all pulls use rebase by default, ensuring a linear history and reducing merge commits. This is especially helpful in teams preferring rebased histories.",
+    "tags": [
+      "pull",
+      "rebase",
+      "config"
+    ]
+  },
+  {
+    "id": "git-023",
+    "pattern": "^git\\s+log\\s+--stat(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--stat' to see file-level changes per commit.",
+    "detail": "'git log --stat' shows a summary of file changes (insertions/deletions) for each commit, providing a quick overview of the impact of each change. Combine with '--oneline' for concise output.",
+    "tags": [
+      "log",
+      "stat",
+      "review"
+    ]
+  },
+  {
+    "id": "git-024",
+    "pattern": "^git\\s+show\\s+",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--stat' with 'git show' for commit file change summary.",
+    "detail": "'git show --stat <commit>' displays the diff and a summary of files changed in the specified commit. This helps quickly assess the scope of a change without reading the full diff.",
+    "tags": [
+      "show",
+      "stat",
+      "review"
+    ]
+  },
+  {
+    "id": "git-025",
+    "pattern": "^git\\s+add\\s+-p(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '-p' to stage changes interactively by hunk.",
+    "detail": "'git add -p' lets you review and stage changes hunk by hunk, enabling precise commits and better history. This is invaluable for splitting large changes into logical commits.",
+    "tags": [
+      "add",
+      "interactive",
+      "staging"
+    ]
+  },
+  {
+    "id": "git-026",
+    "pattern": "^git\\s+commit\\s+--amend(\\s|$)",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "Amending rewrites history; avoid on shared/public branches.",
+    "detail": "'git commit --amend' replaces the last commit with a new one, rewriting history. If the commit has been pushed, amending can cause conflicts for collaborators. Use only on local or private branches.",
+    "tags": [
+      "commit",
+      "amend",
+      "history"
+    ]
+  },
+  {
+    "id": "git-027",
+    "pattern": "^git\\s+push\\s+origin\\s+HEAD:main(\\s|$)",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "Pushing to main directly can overwrite remote history.",
+    "detail": "Pushing HEAD to main may overwrite commits on the remote if your local history diverges. Always pull and review the remote branch before pushing directly to main.",
+    "tags": [
+      "push",
+      "main",
+      "history"
+    ]
+  },
+  {
+    "id": "git-028",
+    "pattern": "^git\\s+merge\\s+--abort(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--abort' to safely exit a conflicted merge.",
+    "detail": "'git merge --abort' resets the working tree to the pre-merge state, discarding all changes from the merge attempt. This is safer than manually resetting files after a conflict.",
+    "tags": [
+      "merge",
+      "abort",
+      "conflict"
+    ]
+  },
+  {
+    "id": "git-029",
+    "pattern": "^git\\s+stash\\s+save(\\s|$)",
+    "cmd": "git",
+    "severity": "upgrade",
+    "hint": "Use 'git stash push' instead of deprecated 'stash save'.",
+    "detail": "'git stash save' is deprecated; 'git stash push' is the modern replacement, supporting more options and clearer syntax. Update scripts and habits to use 'push' for future compatibility.",
+    "tags": [
+      "stash",
+      "upgrade",
+      "deprecated"
+    ]
+  },
+  {
+    "id": "git-030",
+    "pattern": "^git\\s+diff\\s+--cached(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--cached' to see staged changes only.",
+    "detail": "'git diff --cached' shows differences between the index (staged changes) and the last commit. This helps verify exactly what will be committed, especially before a commit.",
+    "tags": [
+      "diff",
+      "staged",
+      "review"
+    ]
+  },
+  {
+    "id": "git-031",
+    "pattern": "^git\\s+fetch\\s+--all(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Combine '--all' with '--prune' to clean up all remotes.",
+    "detail": "'git fetch --all --prune' updates all remotes and removes references to deleted branches. This is essential for maintaining a clean repository when working with multiple remotes.",
+    "tags": [
+      "fetch",
+      "prune",
+      "remotes"
+    ]
+  },
+  {
+    "id": "git-032",
+    "pattern": "^git\\s+reflog(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use 'reflog' to recover lost commits after reset or rebase.",
+    "detail": "'git reflog' records updates to HEAD and branches, allowing you to recover commits lost due to reset, rebase, or checkout. This is a critical tool for undoing mistakes.",
+    "tags": [
+      "reflog",
+      "recovery",
+      "history"
+    ]
+  },
+  {
+    "id": "git-033",
+    "pattern": "^git\\s+bisect(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Automate bisect with 'git bisect run <script>' for faster debugging.",
+    "detail": "'git bisect run <script>' automates the bisection process by running a test script at each step, quickly identifying the commit that introduced a bug. This is much faster than manual marking.",
+    "tags": [
+      "bisect",
+      "automation",
+      "debugging"
+    ]
+  },
+  {
+    "id": "git-034",
+    "pattern": "^git\\s+config\\s+--global\\s+user\\.email\\s+",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "Global email affects all repos; use local config for per-project iden...",
+    "detail": "Setting 'user.email' globally applies to all repositories, which may not be desirable if you use different emails for work and personal projects. Use 'git config user.email' in the repo to override.",
+    "tags": [
+      "config",
+      "identity",
+      "email"
+    ]
+  },
+  {
+    "id": "git-035",
+    "pattern": "^git\\s+log\\s+--follow\\s+",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--follow' to track file history across renames.",
+    "detail": "'git log --follow <file>' shows the history of a file, including across renames. Without '--follow', history is truncated at the rename point.",
+    "tags": [
+      "log",
+      "history",
+      "rename"
+    ]
+  },
+  {
+    "id": "git-036",
+    "pattern": "^git\\s+clone\\s+--depth=\\d+",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Shallow clones save time and bandwidth for large repos.",
+    "detail": "'git clone --depth=N' creates a shallow clone with only the last N commits, reducing download size and time. Be aware that some operations (like pushing or rebasing) are limited in shallow clones.",
+    "tags": [
+      "clone",
+      "performance",
+      "shallow"
+    ]
+  },
+  {
+    "id": "git-037",
+    "pattern": "^git\\s+push\\s+--mirror(\\s|$)",
+    "cmd": "git",
+    "severity": "danger",
+    "hint": "Mirror push overwrites all refs on remote. Use with extreme caution.",
+    "detail": "'git push --mirror' pushes all refs (branches, tags, etc.) and overwrites the remote to match the local repository exactly. This can delete branches and tags on the remote. Only use for full repo migrations.",
+    "tags": [
+      "push",
+      "mirror",
+      "danger"
+    ]
+  },
+  {
+    "id": "git-038",
+    "pattern": "^git\\s+add\\s+--patch(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--patch' to interactively stage parts of files.",
+    "detail": "'git add --patch' is an alias for '-p', allowing you to stage specific hunks within files. This is useful for splitting logical changes into separate commits.",
+    "tags": [
+      "add",
+      "patch",
+      "staging"
+    ]
+  },
+  {
+    "id": "git-039",
+    "pattern": "^git\\s+commit\\s+--no-verify(\\s|$)",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "Skipping hooks may bypass important checks or formatting.",
+    "detail": "'git commit --no-verify' skips pre-commit and commit-msg hooks, which may enforce code quality or formatting. Use only when you are certain the checks are unnecessary for the current commit.",
+    "tags": [
+      "commit",
+      "hooks",
+      "quality"
+    ]
+  },
+  {
+    "id": "git-040",
+    "pattern": "^git\\s+push\\s+--set-upstream\\s+origin\\s+",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Set upstream to enable simple 'git push' and 'git pull'.",
+    "detail": "'git push --set-upstream origin <branch>' configures the local branch to track the remote, allowing future pushes and pulls without specifying the remote and branch names.",
+    "tags": [
+      "push",
+      "upstream",
+      "tracking"
+    ]
+  },
+  {
+    "id": "git-041",
+    "pattern": "^git\\s+merge\\s+--strategy=ours(\\s|$)",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "'ours' strategy ignores all changes from the other branch.",
+    "detail": "'git merge --strategy=ours' resolves all conflicts in favor of the current branch, discarding changes from the merged branch. This can hide important changes if used carelessly.",
+    "tags": [
+      "merge",
+      "strategy",
+      "conflict"
+    ]
+  },
+  {
+    "id": "git-042",
+    "pattern": "^git\\s+rebase\\s+--interactive(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Interactive rebase allows editing, squashing, and reordering commits.",
+    "detail": "'git rebase --interactive' (or '-i') opens an editor to let you pick, squash, or reorder commits, enabling a clean and logical commit history before merging.",
+    "tags": [
+      "rebase",
+      "interactive",
+      "history"
+    ]
+  },
+  {
+    "id": "git-043",
+    "pattern": "^git\\s+log\\s+--pretty=oneline(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--oneline' for compact commit logs.",
+    "detail": "'git log --oneline' is a shorthand for '--pretty=oneline --abbrev-commit', providing a concise view of commit history. Useful for quick overviews.",
+    "tags": [
+      "log",
+      "oneline",
+      "review"
+    ]
+  },
+  {
+    "id": "git-044",
+    "pattern": "^git\\s+diff\\s+--name-only(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--name-only' to list changed files without showing diffs.",
+    "detail": "'git diff --name-only' lists only the names of changed files, which is useful for scripting or quickly identifying affected files without reading the full diff.",
+    "tags": [
+      "diff",
+      "files",
+      "review"
+    ]
+  },
+  {
+    "id": "git-045",
+    "pattern": "^git\\s+tag\\s+-a\\s+",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Annotated tags store metadata and are preferred for releases.",
+    "detail": "'git tag -a <tag>' creates an annotated tag, storing the tagger name, date, and message. Annotated tags are recommended for releases and versioning, as they are stored as full objects in the repository.",
+    "tags": [
+      "tag",
+      "annotated",
+      "release"
+    ]
+  },
+  {
+    "id": "git-046",
+    "pattern": "^git\\s+stash\\s+--include-untracked(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Include untracked files in stash with '-u' or '--include-untracked'.",
+    "detail": "'git stash --include-untracked' (or '-u') stashes both tracked and untracked files, which is useful when you want a completely clean working directory. Untracked files are restored with 'stash pop/apply'.",
+    "tags": [
+      "stash",
+      "untracked",
+      "clean"
+    ]
+  },
+  {
+    "id": "git-047",
+    "pattern": "^git\\s+fetch\\s+origin\\s+refs/pull/",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Fetch pull request refs directly for review or testing.",
+    "detail": "On platforms like GitHub, 'git fetch origin refs/pull/ID/head:BRANCH' fetches a pull request as a local branch, allowing you to test or review PRs without merging.",
+    "tags": [
+      "fetch",
+      "pull-request",
+      "review"
+    ]
+  },
+  {
+    "id": "git-048",
+    "pattern": "^git\\s+commit\\s+--allow-empty(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--allow-empty' to create a commit with no changes.",
+    "detail": "'git commit --allow-empty' creates a commit even if there are no staged changes. This can be useful for marking milestones, triggering CI, or documenting events.",
+    "tags": [
+      "commit",
+      "empty",
+      "milestone"
+    ]
+  },
+  {
+    "id": "git-049",
+    "pattern": "^git\\s+log\\s+--grep=",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--grep' to search commit messages for keywords.",
+    "detail": "'git log --grep=<pattern>' filters commit logs by message content, making it easier to find specific changes or references. Combine with '--author' or '--oneline' for more targeted searches.",
+    "tags": [
+      "log",
+      "search",
+      "grep"
+    ]
+  },
+  {
+    "id": "git-050",
+    "pattern": "^git\\s+push\\s+--dry-run(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--dry-run' to preview what would be pushed.",
+    "detail": "'git push --dry-run' shows which commits and refs would be pushed, without actually updating the remote. This is useful for verifying push effects before making changes.",
+    "tags": [
+      "push",
+      "dry-run",
+      "preview"
+    ]
+  },
+  {
+    "id": "git-051",
+    "pattern": "^git\\s+merge\\s+--no-commit(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--no-commit' to review or modify the merge before committing.",
+    "detail": "'git merge --no-commit' performs the merge but leaves changes staged, allowing you to review, test, or further modify the result before finalizing the commit.",
+    "tags": [
+      "merge",
+      "review",
+      "staging"
+    ]
+  },
+  {
+    "id": "git-052",
+    "pattern": "^git\\s+reset\\s+--soft(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Soft reset moves HEAD but keeps changes staged.",
+    "detail": "'git reset --soft <commit>' moves HEAD to the specified commit but leaves all changes staged. This is useful for combining commits or reworking recent history without losing work.",
+    "tags": [
+      "reset",
+      "soft",
+      "history"
+    ]
+  },
+  {
+    "id": "git-053",
+    "pattern": "^git\\s+stash\\s+list(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use 'stash list' to view all stashed changes with messages.",
+    "detail": "'git stash list' shows all stashes, including their messages and commit references. Use descriptive messages when stashing for easier retrieval later.",
+    "tags": [
+      "stash",
+      "list",
+      "review"
+    ]
+  },
+  {
+    "id": "git-054",
+    "pattern": "^git\\s+log\\s+--since=",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--since' to filter commits by date.",
+    "detail": "'git log --since=<date>' shows commits newer than the specified date. Accepts flexible date formats (e.g., '2.weeks', 'yesterday'), aiding in time-based reviews.",
+    "tags": [
+      "log",
+      "date",
+      "filter"
+    ]
+  },
+  {
+    "id": "git-055",
+    "pattern": "^git\\s+commit\\s+--fixup=",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--fixup' to prepare commits for autosquash rebasing.",
+    "detail": "'git commit --fixup=<commit>' creates a commit marked for squashing into the target during an interactive rebase with '--autosquash'. This streamlines history cleanup before merging.",
+    "tags": [
+      "commit",
+      "fixup",
+      "rebase"
+    ]
+  },
+  {
+    "id": "git-056",
+    "pattern": "^git\\s+rebase\\s+--autosquash(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Autosquash automatically moves fixup/squash commits during rebase.",
+    "detail": "'git rebase --autosquash' automatically reorders and marks fixup/squash commits for squashing, reducing manual editing during interactive rebases. Combine with '--interactive' for best results.",
+    "tags": [
+      "rebase",
+      "autosquash",
+      "history"
+    ]
+  },
+  {
+    "id": "git-057",
+    "pattern": "^git\\s+log\\s+--author=",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--author' to filter commits by contributor.",
+    "detail": "'git log --author=<pattern>' limits log output to commits by a specific author. Useful for tracking individual contributions or code reviews.",
+    "tags": [
+      "log",
+      "author",
+      "filter"
+    ]
+  },
+  {
+    "id": "git-058",
+    "pattern": "^git\\s+branch\\s+-D\\s+",
+    "cmd": "git",
+    "severity": "danger",
+    "hint": "Branch deletion with '-D' is irreversible; use '-d' for safety.",
+    "detail": "'git branch -D <branch>' forcibly deletes a branch, even if it has unmerged changes. Use '-d' to prevent deleting branches with unmerged commits, avoiding accidental data loss.",
+    "tags": [
+      "branch",
+      "delete",
+      "danger"
+    ]
+  },
+  {
+    "id": "git-059",
+    "pattern": "^git\\s+rebase\\s+origin/",
+    "cmd": "git",
+    "severity": "warn",
+    "hint": "Rebasing on remote branches rewrites local history; check for conflicts.",
+    "detail": "'git rebase origin/<branch>' rewrites your local branch history atop the remote branch. This can cause conflicts if your branch diverged significantly. Always resolve conflicts carefully and avoid rebasing shared branches.",
+    "tags": [
+      "rebase",
+      "remote",
+      "conflict"
+    ]
+  },
+  {
+    "id": "git-060",
+    "pattern": "^git\\s+log\\s+--decorate(\\s|$)",
+    "cmd": "git",
+    "severity": "tip",
+    "hint": "Use '--decorate' to show branch and tag names in logs.",
+    "detail": "'git log --decorate' annotates commits with branch and tag names, making it easier to understand the commit's context in the repository. Combine with '--oneline' and '--graph' for a comprehensive overview.",
+    "tags": [
+      "log",
+      "decorate",
+      "visualization"
+    ]
+  }
+]
