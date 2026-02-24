@@ -859,32 +859,102 @@ def get_rule_hints(recent_cmds, last_shown):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  HINTS OUTPUT
+#  LOGO + IDLE TIPS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def write_hints(rule_hints, ai_hints, cwd, cmd_count, thinking=False):
+IDLE_TIMEOUT = 90   # seconds of no new commands before showing usage tips
+IDLE_TIP_ROTATE = 20  # seconds between idle tip rotations
+
+# 4-line ASCII logo — rendered right-aligned alongside hints
+LOGO_LINES = [
+    r" ___ _        _ _ _              _    _",
+    r"/ __| |_  ___| | | |__  _  _ __| |__| |_  _",
+    r"\__ \ ' \/ -_) | | '_ \| || / _` / _` | || |",
+    r"|___/_||_\___|_|_|_.__/ \_,_\__,_\__,_|\_, |",
+    r"                                        |__/ ",
+]
+LOGO_TAG = "  [>_] ambient terminal coach"
+
+# Rotating usage tips shown when idle
+IDLE_TIPS = [
+    ("/tip <question>",          "ask any terminal question, get instant expert answer"),
+    ("/tip status",              "full diagnostic — backend, model, KB, hints age"),
+    ("/tip postmortem",          "show last auto-drafted git commit message"),
+    ("/tip test",                "force an ambient hint cycle and verify the pipeline"),
+    ("hint prefixes",            "!! danger  !  warn  -> tip  => upgrade"),
+    ("kb engine",                "1700+ regex rules across 40 categories — instant match"),
+    ("3 hint layers",            "rules (<10ms) + ambient LLM + advisor background"),
+    ("unified context",          "rules, hints, /tip Q&A all share one session log"),
+    ("model chain",              "gpt-5-mini → raptor-mini → gpt-4.1 for ambient"),
+    ("post-mortem",              "commit message auto-drafted on every git commit"),
+    ("hints-stop && sb",         "restart daemon (pick up config/kb changes)"),
+    ("config: hint_model_chain", "customize fallback models in ~/.shellbuddy/config.json"),
+    ("Ctrl+A H",                 "toggle hints pane in tmux (if tmux.conf installed)"),
+    ("ctx log cap",              "unified_context.jsonl capped at 200 entries"),
+    ("custom rules",             "add entries to ~/.shellbuddy/kb.json, restart daemon"),
+]
+
+_idle_tip_index = 0
+
+
+def _get_idle_tip(ts_rotation: int) -> str:
+    """Return one rotating idle tip based on time slot."""
+    idx = (ts_rotation // IDLE_TIP_ROTATE) % len(IDLE_TIPS)
+    cmd, desc = IDLE_TIPS[idx]
+    return f"IDLE_TIP\t{cmd}\t{desc}"
+
+
+def write_hints(rule_hints, ai_hints, cwd, cmd_count, thinking=False, idle=False):
     ts = datetime.now().strftime("%H:%M:%S")
+    ts_epoch = int(time.time())
     cwd_short = str(Path(cwd)).replace(str(Path.home()), "~")
-    lines = [f"HINTS  {cwd_short}  [{ts}]  ({cmd_count} cmds)", "─" * 58]
 
+    # Header line — cwd + timestamp + cmd count
+    header = f"HINTS  {cwd_short}  [{ts}]  ({cmd_count} cmds)"
+
+    # Separator width = terminal width guess (60 chars safe default)
+    sep = "─" * 58
+
+    # Content lines (hints area — lines 3..MAX)
     hint_strs = [h for _, h in rule_hints]
+    content = []
     for h in hint_strs[:3]:
-        lines.append(h)
+        content.append(h)
 
-    if thinking and not ai_hints:
+    if idle:
+        # Replace ambient slot with idle usage tip
+        tip_line = _get_idle_tip(ts_epoch)
         if hint_strs:
-            lines.append("·")
-        lines.append("thinking ...")
+            content.append("·")
+        content.append(tip_line)
+        content.append("IDLE_LABEL\t  shellbuddy usage  (idle — no new commands)")
+    elif thinking and not ai_hints:
+        if hint_strs:
+            content.append("·")
+        content.append("thinking ...")
     elif ai_hints:
         ai_lines = [l.strip() for l in ai_hints.splitlines() if l.strip()][:5]
         if ai_lines:
             if hint_strs:
-                lines.append("·")
+                content.append("·")
             for h in ai_lines:
-                lines.append(h[:65])
+                content.append(h[:65])
 
+    # Build final line list: header + sep + content, padded to MAX_HINT_LINES+2
+    lines = [header, sep] + content
     while len(lines) < MAX_HINT_LINES + 2:
         lines.append("")
+
+    # Embed logo — tag each logo line so show_hints.sh can right-align + colour it
+    # Use tab (\t) as field separator (safe: logo/hints never contain tabs)
+    for i, logo_line in enumerate(LOGO_LINES):
+        slot = i + 2
+        if slot < len(lines):
+            lines[slot] = f"LOGO\t{logo_line}\t{lines[slot]}"
+    # Logo tag line below logo
+    logo_tag_slot = 2 + len(LOGO_LINES)
+    if logo_tag_slot < len(lines):
+        lines[logo_tag_slot] = f"LOGO_TAG\t{LOGO_TAG}\t{lines[logo_tag_slot]}"
 
     HINTS_OUT.write_text("\n".join(lines[:MAX_HINT_LINES + 2]))
 
@@ -907,6 +977,7 @@ def run():
     last_cwd              = ""
     last_ai_text          = ""
     last_hint_check       = 0.0
+    last_activity_time    = time.time()  # tracks when last command was seen
     rule_last_shown       = {}
     _hint_thread          = None
     _advisor_thread       = None
@@ -958,16 +1029,16 @@ def run():
             has_new     = current_count != last_cmd_count
             cwd_changed = cwd != last_cwd
             ai_ready    = (now - last_ai_call) > AI_THROTTLE
+            is_idle     = (now - last_activity_time) > IDLE_TIMEOUT and current_count >= MIN_COMMANDS
 
             if (has_new or cwd_changed) and current_count >= MIN_COMMANDS:
+                last_activity_time = now  # reset idle clock on any new activity
 
                 # Layer 1a: regex rules — instant, log matched rules to unified context
                 rule_hints = get_rule_hints(recent, rule_last_shown)
                 for rid, _ in rule_hints:
                     rule_last_shown[rid] = time.time()
-                    # Write matched rule to unified context (with detail if KB engine)
                     if _KB_ENGINE and _KB_ENGINE.loaded:
-                        # find entry by id
                         for entry in (_KB_ENGINE._buckets.get(rid.split("-")[0], []) +
                                       _KB_ENGINE._generic):
                             if entry[1].get("id") == rid:
@@ -984,11 +1055,11 @@ def run():
                 # Log new commands to unified context
                 if has_new:
                     new_cmds = recent[-(current_count - last_cmd_count):]
-                    for c in new_cmds[-5:]:  # cap at 5 to avoid log spam on first run
+                    for c in new_cmds[-5:]:
                         ctx_append({"type": "cmd", "cmd": c.get("cmd", ""),
                                     "cwd": c.get("cwd", "")})
 
-                    # Post-mortem: fire on git commit (once per commit, not on every poll)
+                    # Post-mortem: fire on git commit (once per commit)
                     if (_post_mortem_thread is None or not _post_mortem_thread.is_alive()):
                         for c in new_cmds[-5:]:
                             if _is_git_commit(c.get("cmd", "")) and current_count != _last_post_mortem_cmd:
@@ -1020,7 +1091,7 @@ def run():
                 else:
                     write_hints(rule_hints, last_ai_text, cwd, current_count)
 
-                # Layer 2: advisor — debounced, writes intent/prediction to unified context
+                # Layer 2: advisor — debounced
                 cmds_since_advisor = current_count - last_advisor_cmd
                 advisor_ready = (now - last_advisor_call) > ADVISOR_THROTTLE
                 if (cmds_since_advisor >= ADVISOR_EVERY and advisor_ready and
@@ -1036,6 +1107,11 @@ def run():
 
                 last_cmd_count = current_count
                 last_cwd = cwd
+
+            elif is_idle:
+                # No new commands for IDLE_TIMEOUT seconds — show rotating usage tips
+                rule_hints = get_rule_hints(recent, rule_last_shown)
+                write_hints(rule_hints, "", cwd, current_count, idle=True)
 
             time.sleep(POLL_INTERVAL)
 
