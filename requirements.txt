@@ -1,0 +1,5 @@
+# shellbuddy — Python dependencies
+# Core daemon uses only stdlib (no required dependencies).
+#
+# Optional — only needed for specific AI backends:
+# pycryptodome    # Copilot backend (VS Code token decryption)

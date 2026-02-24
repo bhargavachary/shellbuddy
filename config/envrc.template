@@ -1,0 +1,31 @@
+# .envrc — place this in any project directory, then run: direnv allow
+#
+# direnv automatically sources this when you cd into the directory
+# and un-sources it when you leave. Works seamlessly with zoxide.
+#
+# Usage:
+#   cp ~/Desktop/Projects/shellbuddy/config/envrc.template .envrc
+#   edit the CONDA_ENV line below
+#   direnv allow
+
+# ── Conda environment ─────────────────────────────────────────────────────────
+# Auto-activates the named conda env when you enter this directory.
+# Replace "myenv" with your actual env name (conda env list to see available).
+CONDA_ENV="myenv"
+
+# Activate conda env via direnv's conda layout
+# (uses conda's shell hook without polluting global env)
+if command -v conda &>/dev/null; then
+    # direnv stdlib doesn't have conda layout by default — use manual approach
+    eval "$(conda shell.bash activate "$CONDA_ENV" 2>/dev/null)"
+fi
+
+# ── Project env vars ──────────────────────────────────────────────────────────
+# Uncomment and fill in as needed:
+# export DATABASE_URL="postgresql://localhost/mydb"
+# export API_BASE_URL="http://localhost:8000"
+# export DEBUG="1"
+
+# ── PATH additions ────────────────────────────────────────────────────────────
+# PATH_add ./scripts     # add ./scripts to PATH (direnv built-in)
+# PATH_add ./.venv/bin   # for virtualenv if not using conda

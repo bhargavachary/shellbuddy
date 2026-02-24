@@ -1,0 +1,106 @@
+# shellbuddy — starship.toml
+# Copy to ~/.config/starship.toml
+# Shows: dir | git | conda env | lang versions | cmd duration | exit code
+# Two-line prompt: info line + character line
+
+"$schema" = 'https://starship.rs/config-schema.json'
+
+format = """
+$directory\
+$git_branch\
+$git_status\
+$conda\
+$python\
+$nodejs\
+$rust\
+$go\
+$cmd_duration\
+$status\
+$line_break\
+$character"""
+
+# ── Directory ─────────────────────────────────────────────────────────────────
+[directory]
+style = "bold cyan"
+truncation_length = 4
+truncate_to_repo = true
+format = "[$path]($style)[$read_only]($read_only_style) "
+read_only = " 󰌾"
+
+# ── Git ───────────────────────────────────────────────────────────────────────
+[git_branch]
+format = "[$symbol$branch]($style) "
+style = "bold purple"
+symbol = " "
+
+[git_status]
+format = '([$all_status$ahead_behind]($style) )'
+style = "bold yellow"
+conflicted = "!!"
+ahead      = "⇡${count}"
+behind     = "⇣${count}"
+diverged   = "⇕⇡${ahead_count}⇣${behind_count}"
+untracked  = "?"
+stashed    = "≡"
+modified   = "~"
+staged     = "+"
+renamed    = "»"
+deleted    = "✘"
+
+# ── Conda / Python ────────────────────────────────────────────────────────────
+[conda]
+format = "[$symbol$environment]($style) "
+style = "bold green"
+symbol = " "
+ignore_base = false      # show 'base' env so you know when it's active
+
+[python]
+format = "[$symbol$version]($style) "
+style = "yellow"
+symbol = " "
+detect_files = ["pyproject.toml", "requirements.txt", ".python-version", "setup.py"]
+detect_extensions = ["py"]
+
+# ── Node.js ───────────────────────────────────────────────────────────────────
+[nodejs]
+format = "[$symbol$version]($style) "
+style = "bold green"
+symbol = "󰎙 "
+detect_files = ["package.json", ".nvmrc"]
+
+# ── Rust ──────────────────────────────────────────────────────────────────────
+[rust]
+format = "[$symbol$version]($style) "
+style = "bold red"
+detect_files = ["Cargo.toml"]
+
+# ── Go ────────────────────────────────────────────────────────────────────────
+[go]
+format = "[$symbol$version]($style) "
+style = "bold cyan"
+detect_files = ["go.mod"]
+
+# ── Command duration ──────────────────────────────────────────────────────────
+# Shows automatically for commands that took more than 2 seconds.
+# Helps you spot slow commands worth optimising.
+[cmd_duration]
+min_time = 2000
+format = "[$duration]($style) "
+style = "bold yellow"
+show_milliseconds = false
+
+# ── Exit status ───────────────────────────────────────────────────────────────
+# Shows red ✗ code if last command failed. Nothing if it succeeded.
+[status]
+disabled = false
+format = "[$symbol$status]($style) "
+style = "bold red"
+symbol = "✗ "
+success_symbol = ""
+
+# ── Prompt character ──────────────────────────────────────────────────────────
+# ❯ in green (normal), ❯ in red (last command failed), ❮ in yellow (vim normal mode)
+[character]
+success_symbol = "[❯](bold green)"
+error_symbol   = "[❯](bold red)"
+vimcmd_symbol  = "[❮](bold yellow)"

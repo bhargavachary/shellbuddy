@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime files (created in ~/.shellbuddy/, not in repo)
+cmd_log.jsonl
+current_hints.txt
+daemon.pid
+daemon.log
+copilot_token.json
+tip_query.txt
+tip_result.txt
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
