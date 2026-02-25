@@ -19,15 +19,17 @@ HINTS_FILE="$SB_DIR/current_hints.txt"
 DAEMON_PID="$SB_DIR/daemon.pid"
 
 C_RESET='\033[0m'
-C_DIM='\033[2m'
+C_DIM='\033[38;5;242m'            # mid-grey  (was \033[2m → near-black on dark bg)
 C_CYAN='\033[1;36m'
-C_CYAN_DIM='\033[2;36m'
-C_YELLOW='\033[33m'
-C_GREEN='\033[32m'
-C_MAGENTA='\033[35m'
-C_MAGENTA_BOLD='\033[1;35m'
-C_BLUE_DIM='\033[2;34m'
-C_WHITE_DIM='\033[2;37m'
+C_CYAN_DIM='\033[38;5;73m'        # muted teal (was dim cyan → near-black)
+C_GREEN='\033[38;5;111m'          # soft periwinkle — AI ambient hints
+C_GREEN_DIM='\033[38;5;111m'
+C_YELLOW='\033[38;5;216m'         # light peach — rule hints
+C_YELLOW_DIM='\033[38;5;216m'
+C_MAGENTA='\033[38;5;183m'        # soft lilac  (was \033[35m → dark magenta)
+C_MAGENTA_BOLD='\033[38;5;189m'   # light lavender
+C_BLUE_DIM='\033[38;5;110m'       # steel blue  (was dim blue → near-black)
+C_WHITE_DIM='\033[38;5;250m'      # light grey  (was dim white → near-black)
 
 printf '\033[2J\033[H'
 
@@ -98,11 +100,11 @@ while IFS=$'\t' read -r f1 f2 f3 f4 f5; do
             _label="${_hint#IDLE_LABEL$'\t'}"
             printf "${C_BLUE_DIM}%s${C_RESET}\n" "$_label"
         elif [[ "$_hint" == \[*x\]* ]]; then
-            _print_with_logo "$_hint" "$_logo" "$C_YELLOW"
+            _print_with_logo "$_hint" "$_logo" "$C_YELLOW_DIM"
         elif [[ "$_hint" == "·" ]]; then
             _print_with_logo "·" "$_logo" "$C_DIM"
         elif [[ -n "$_hint" ]]; then
-            _print_with_logo "$_hint" "$_logo" "$C_GREEN"
+            _print_with_logo "$_hint" "$_logo" "$C_GREEN_DIM"
         else
             _pad=$(( LOGO_COL - 2 ))
             (( _pad < 1 )) && _pad=1
@@ -113,7 +115,7 @@ while IFS=$'\t' read -r f1 f2 f3 f4 f5; do
         # LOGO_TAG\t<tag>\t<hint>
         _tag="$f2" _hint="$f3"
         if [[ -n "$_hint" ]]; then
-            _print_with_logo "$_hint" "$_tag" "$C_GREEN" "$C_MAGENTA_BOLD"
+            _print_with_logo "$_hint" "$_tag" "$C_GREEN_DIM" "$C_MAGENTA_BOLD"
         else
             _pad=$(( LOGO_COL - 2 ))
             (( _pad < 1 )) && _pad=1
@@ -129,8 +131,8 @@ while IFS=$'\t' read -r f1 f2 f3 f4 f5; do
         printf "${C_BLUE_DIM}%s${C_RESET}\n" "$f2"
 
     elif [[ "$f1" == \[*x\]* ]] && [[ -z "$f2" ]]; then
-        # Rule hint — yellow
-        printf "${C_YELLOW}  %s${C_RESET}\n" "$f1"
+        # Rule hint — muted amber, dim body
+        printf "${C_YELLOW_DIM}  %s${C_RESET}\n" "$f1"
 
     elif [[ "$f1" == "·" ]] && [[ -z "$f2" ]]; then
         printf "${C_DIM}  ·${C_RESET}\n"
@@ -139,8 +141,8 @@ while IFS=$'\t' read -r f1 f2 f3 f4 f5; do
         printf "${C_CYAN_DIM}  %s${C_RESET}\n" "$f1"
 
     elif [[ -n "$f1" ]] && [[ -z "$f2" ]]; then
-        # Plain AI hint — green
-        printf "${C_GREEN}  %s${C_RESET}\n" "$f1"
+        # Plain AI hint — muted sage green, dim
+        printf "${C_GREEN_DIM}  %s${C_RESET}\n" "$f1"
 
     else
         echo ""

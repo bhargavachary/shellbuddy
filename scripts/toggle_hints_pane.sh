@@ -1,8 +1,8 @@
 #!/usr/bin/env zsh
 # shellbuddy — toggle_hints_pane.sh
 # Toggles both panes in the current tmux window:
-#   STATS pane  — 2 lines, live CPU/RAM/GPU at 0.1s (show_stats.sh)
-#   HINTS pane  — 16 lines, ambient hints + logo (show_hints.sh)
+#   STATS pane  — 5 lines, live CPU/RAM/GPU at 0.1s (show_stats.sh)
+#   HINTS pane  — 16 lines, ambient hints (show_hints.sh)
 #
 # Both are created/destroyed together as a unit.
 # Keybind: Ctrl+A H (if tmux.conf installed)
@@ -28,9 +28,9 @@ else
     tmux select-pane -T "$HINTS_TITLE"
     HINTS_PANE_ID=$(tmux display-message -p "#{pane_id}")
 
-    # ── Create STATS pane (2 lines, above hints) ───────────────────────────
-    tmux split-window -v -b -l 2 -t "$HINTS_PANE_ID" -c "$HOME" \
-        "trap '' INT TERM; python3 $SB_DIR/show_stats.sh"
+    # ── Create STATS pane (3 lines, above hints) ───────────────────────────
+    tmux split-window -v -b -l 5 -t "$HINTS_PANE_ID" -c "$HOME" \
+        "trap '' INT TERM; LINES=5 python3 $SB_DIR/show_stats.sh"
     tmux select-pane -T "$STATS_TITLE"
 
     # Return focus to main (bottom) pane

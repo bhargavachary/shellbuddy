@@ -878,15 +878,6 @@ def get_rule_hints(recent_cmds, last_shown):
 IDLE_TIMEOUT = 90   # seconds of no new commands before showing usage tips
 IDLE_TIP_ROTATE = 20  # seconds between idle tip rotations
 
-# 4-line ASCII logo — rendered right-aligned alongside hints
-LOGO_LINES = [
-    r" ___ _        _ _ _              _    _",
-    r"/ __| |_  ___| | | |__  _  _ __| |__| |_  _",
-    r"\__ \ ' \/ -_) | | '_ \| || / _` / _` | || |",
-    r"|___/_||_\___|_|_|_.__/ \_,_\__,_\__,_|\_, |",
-    r"                                        |__/ ",
-]
-LOGO_TAG = "  [>_] ambient terminal coach"
 
 # Rotating usage tips shown when idle
 IDLE_TIPS = [
@@ -957,17 +948,6 @@ def write_hints(rule_hints, ai_hints, cwd, cmd_count, thinking=False, idle=False
     lines = [header, sep] + content
     while len(lines) < MAX_HINT_LINES + 2:
         lines.append("")
-
-    # Embed logo — tag each logo line so show_hints.sh can right-align + colour it
-    # Use tab (\t) as field separator (safe: logo/hints never contain tabs)
-    for i, logo_line in enumerate(LOGO_LINES):
-        slot = i + 2
-        if slot < len(lines):
-            lines[slot] = f"LOGO\t{logo_line}\t{lines[slot]}"
-    # Logo tag line below logo
-    logo_tag_slot = 2 + len(LOGO_LINES)
-    if logo_tag_slot < len(lines):
-        lines[logo_tag_slot] = f"LOGO_TAG\t{LOGO_TAG}\t{lines[logo_tag_slot]}"
 
     HINTS_OUT.write_text("\n".join(lines[:MAX_HINT_LINES + 2]))
 

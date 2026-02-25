@@ -842,6 +842,22 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  STEP 5b: TERMINAL APPEARANCE (macOS only)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if [[ "$OSTYPE" == darwin* ]] && [[ "$TERM_PROGRAM" == "Apple_Terminal" ]]; then
+    info "Setting Terminal.app background to pure black..."
+    if osascript -e '
+        tell application "Terminal"
+            set background color of settings set "Basic" to {0, 0, 0, 65535}
+        end tell' 2>/dev/null; then
+        ok "Terminal.app background set to pure black"
+    else
+        warn "Could not set Terminal.app background (non-critical)"
+    fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  STEP 6: STARSHIP CONFIG
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1002,6 +1018,10 @@ function hints-stop() {
 alias hints-log='tail -f \$SHELLBUDDY_DIR/daemon.log'
 alias hints-now='[[ -f \$SHELLBUDDY_DIR/current_hints.txt ]] && cat \$SHELLBUDDY_DIR/current_hints.txt || echo "No hints yet"'
 alias hints-status='{ [[ -f \$SHELLBUDDY_DIR/daemon.pid ]] && kill -0 \$(cat \$SHELLBUDDY_DIR/daemon.pid) 2>/dev/null && echo "shellbuddy: running (PID \$(cat \$SHELLBUDDY_DIR/daemon.pid))"; } || echo "shellbuddy: stopped"'
+
+# ── tmux session shortcuts ────────────────────────────────────────────────────
+alias tmuxdstart='tmux new -s dev'
+alias tmuxdkill='tmux kill-session -t dev'
 
 # /tip — ask any CLI/terminal question from your prompt
 # Usage: /tip how to undo last git commit
@@ -1384,7 +1404,7 @@ if [[ "$BACKEND" == "ollama" ]]; then
     (( STEP_N++ )) || true
 fi
 
-printf "  ${C_CYAN}%d.${C_RESET} ${C_BOLD}tmux new -s dev${C_RESET}\n" $STEP_N
+printf "  ${C_CYAN}%d.${C_RESET} ${C_BOLD}tmuxdstart${C_RESET}  ${C_DIM}(or: tmux new -s dev)${C_RESET}\n" $STEP_N
 (( STEP_N++ )) || true
 
 printf "  ${C_CYAN}%d.${C_RESET} ${C_BOLD}sb${C_RESET}  ${C_DIM}(or Ctrl+A H inside tmux)${C_RESET}\n" $STEP_N
