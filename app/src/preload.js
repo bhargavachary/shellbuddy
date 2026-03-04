@@ -35,6 +35,11 @@ contextBridge.exposeInMainWorld('shellbuddy', {
     },
   },
 
+  // ── Stats (collected in main process) ────────────────────────────────────
+  stats: {
+    collect: () => ipcRenderer.invoke('stats-collect'),
+  },
+
   // ── Config ───────────────────────────────────────────────────────────────
   config: {
     read: () => ipcRenderer.invoke('config-read'),
@@ -43,9 +48,16 @@ contextBridge.exposeInMainWorld('shellbuddy', {
     getSbDir: () => ipcRenderer.invoke('sb-dir'),
   },
 
+  // ── Shell Integration (.zshrc patching) ──────────────────────────────────
+  shellIntegration: {
+    isInstalled: () => ipcRenderer.invoke('shell-is-installed'),
+    install: () => ipcRenderer.invoke('shell-install'),
+    uninstall: () => ipcRenderer.invoke('shell-uninstall'),
+  },
+
   // ── Menu Events ──────────────────────────────────────────────────────────
   on: (channel, cb) => {
-    const allowed = ['show-settings', 'toggle-hints', 'toggle-stats', 'new-tab', 'clear-terminal'];
+    const allowed = ['show-settings', 'toggle-hints', 'toggle-stats', 'clear-terminal'];
     if (allowed.includes(channel)) {
       const listener = () => cb();
       ipcRenderer.on(channel, listener);

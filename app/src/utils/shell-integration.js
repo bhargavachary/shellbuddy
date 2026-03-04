@@ -13,6 +13,8 @@ const os = require('os');
 
 const MARKER_START = '# ══ SHELLBUDDY ══';
 const MARKER_END = '# ══ END SHELLBUDDY ══';
+// Also detect the marker used by install.sh (# ── shellbuddy ──) to avoid double-patching
+const MARKER_LEGACY = '# ── shellbuddy';
 
 /**
  * Generate the zshrc block that enables command logging.
@@ -36,12 +38,14 @@ ${MARKER_END}`;
 }
 
 /**
- * Check if .zshrc already has a ShellBuddy block.
+ * Check if .zshrc already has a ShellBuddy block (either format).
  */
 function isInstalled() {
   const zshrc = path.join(os.homedir(), '.zshrc');
   if (!fs.existsSync(zshrc)) return false;
-  return fs.readFileSync(zshrc, 'utf-8').includes(MARKER_START);
+  const content = fs.readFileSync(zshrc, 'utf-8');
+  // Detect both the app-wizard block and the install.sh block
+  return content.includes(MARKER_START) || content.includes(MARKER_LEGACY);
 }
 
 /**
@@ -52,7 +56,13 @@ function install(sbDir) {
   const zshrc = path.join(os.homedir(), '.zshrc');
   let content = fs.existsSync(zshrc) ? fs.readFileSync(zshrc, 'utf-8') : '';
 
-  // Remove old block if present
+  // If the full install.sh block is already present, don't add a second block.
+  // The install.sh block is more complete (contains all sb/hints-* functions).
+  if (content.includes(MARKER_LEGACY)) {
+    return false; // already handled by install.sh
+  }
+
+  // Remove existing app-wizard block if present
   const startIdx = content.indexOf(MARKER_START);
   const endIdx = content.indexOf(MARKER_END);
   if (startIdx !== -1 && endIdx !== -1) {
@@ -66,7 +76,8 @@ function install(sbDir) {
 }
 
 /**
- * Remove the ShellBuddy block from .zshrc.
+ * Remove the ShellBuddy block from .zshrc (app-wizard format only).
+ * The install.sh block is left for uninstall.sh to handle.
  */
 function uninstall() {
   const zshrc = path.join(os.homedir(), '.zshrc');

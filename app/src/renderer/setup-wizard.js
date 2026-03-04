@@ -45,7 +45,7 @@ class SetupWizard {
     };
 
     if (backend === 'copilot') {
-      config.hint_model_chain = ['gpt-5-mini', 'raptor-mini', 'gpt-4.1'];
+      config.hint_model_chain = ['gpt-4.1-mini', 'gpt-4.1'];
     }
     if (backend === 'ollama') {
       config.ollama_url = 'http://localhost:11434';
@@ -56,8 +56,11 @@ class SetupWizard {
 
     // Patch .zshrc if requested
     if (patchZshrc) {
-      // This will be handled by shell-integration.js via IPC
-      // For now, the daemon start in main.js handles file copying
+      try {
+        await window.shellbuddy.shellIntegration.install();
+      } catch (err) {
+        console.warn('[ShellBuddy] Could not patch .zshrc:', err);
+      }
     }
 
     // Hide wizard, show app
@@ -69,7 +72,7 @@ class SetupWizard {
 
   _defaultModel(backend) {
     switch (backend) {
-      case 'copilot': return 'gpt-5-mini';
+      case 'copilot': return 'gpt-4.1-mini';
       case 'claude': return 'claude-haiku-4-5-20251001';
       case 'ollama': return 'qwen3:4b';
       case 'openai': return 'gpt-4o-mini';

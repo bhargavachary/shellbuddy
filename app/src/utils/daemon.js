@@ -106,8 +106,7 @@ class DaemonManager {
     }
 
     // Copy scripts
-    const scriptsDir = path.join(resourceBase);
-    const dstScripts = this.sbDir; // scripts go directly into sbDir
+    const scriptsDir = resourceBase;
     for (const { src, dst } of filesToCopy) {
       if (fs.existsSync(src) && !fs.existsSync(dst)) {
         fs.copyFileSync(src, dst);

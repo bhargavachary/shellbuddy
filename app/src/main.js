@@ -30,6 +30,7 @@ function resourcePath(...parts) {
 let mainWindow = null;
 let daemon = null;
 let hintsWatcher = null;
+let hintsInterval = null; // fallback poller when fs.watch not available
 let ptyProcess = null;
 
 // ── Window Creation ──────────────────────────────────────────────────────────
@@ -45,11 +46,17 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false,
+      nodeIntegration: true,
+      sandbox: false,
     },
   });
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+
+  // Open devtools in dev mode
+  if (!app.isPackaged) {
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  }
 
   // Hide menu bar (keep system shortcuts)
   Menu.setApplicationMenu(Menu.buildFromTemplate([
@@ -88,7 +95,6 @@ function createWindow() {
     {
       label: 'Terminal',
       submenu: [
-        { label: 'New Tab', accelerator: 'Cmd+T', click: () => mainWindow.webContents.send('new-tab') },
         { label: 'Clear', accelerator: 'Cmd+K', click: () => mainWindow.webContents.send('clear-terminal') },
       ],
     },
@@ -142,7 +148,7 @@ function watchHints() {
     });
   } catch (_) {
     // File may not exist yet — poll instead
-    setInterval(sendHints, 3000);
+    hintsInterval = setInterval(sendHints, 3000);
   }
 }
 
@@ -151,6 +157,12 @@ function setupPtyIPC() {
   const pty = require('node-pty');
 
   ipcMain.handle('pty-spawn', (_event, { cols, rows }) => {
+    // Kill any existing PTY before spawning a new one
+    if (ptyProcess) {
+      try { ptyProcess.kill(); } catch (_) {}
+      ptyProcess = null;
+    }
+
     const shell = process.env.SHELL || '/bin/zsh';
     ptyProcess = pty.spawn(shell, [], {
       name: 'xterm-256color',
@@ -193,8 +205,74 @@ function setupPtyIPC() {
   });
 }
 
+// ── Stats IPC (collected in main process to avoid blocking renderer) ─────────
+function setupStatsIPC() {
+  const { execSync } = require('child_process');
+  let lastCpuIdle = 0;
+  let lastCpuTotal = 0;
+
+  ipcMain.handle('stats-collect', () => {
+    const result = {};
+
+    // CPU
+    try {
+      const cpus = os.cpus();
+      let totalIdle = 0, totalTick = 0;
+      for (const cpu of cpus) {
+        for (const type in cpu.times) totalTick += cpu.times[type];
+        totalIdle += cpu.times.idle;
+      }
+      const idle = totalIdle / cpus.length;
+      const total = totalTick / cpus.length;
+      if (lastCpuTotal > 0) {
+        const idleDelta = idle - lastCpuIdle;
+        const totalDelta = total - lastCpuTotal;
+        result.cpu = totalDelta > 0 ? Math.round((1 - idleDelta / totalDelta) * 100) : 0;
+      }
+      lastCpuIdle = idle;
+      lastCpuTotal = total;
+    } catch (_) { result.cpu = null; }
+
+    // RAM
+    try {
+      const total = os.totalmem();
+      const free = os.freemem();
+      result.ram = Math.round(((total - free) / total) * 100);
+    } catch (_) { result.ram = null; }
+
+    // GPU (macOS ioreg)
+    try {
+      const out = execSync(
+        "ioreg -r -d 1 -c IOAccelerator 2>/dev/null | grep '\"Device Utilization %\"' | head -1",
+        { encoding: 'utf-8', timeout: 1000 }
+      );
+      const match = out.match(/= (\d+)/);
+      result.gpu = match ? parseInt(match[1], 10) : 0;
+    } catch (_) { result.gpu = null; }
+
+    // Git
+    try {
+      const branch = execSync('git branch --show-current 2>/dev/null', {
+        encoding: 'utf-8', timeout: 1000, cwd: os.homedir(),
+      }).trim();
+      let dirty = false;
+      if (branch) {
+        const status = execSync('git status --porcelain 2>/dev/null | head -1', {
+          encoding: 'utf-8', timeout: 1000, cwd: os.homedir(),
+        }).trim();
+        dirty = status.length > 0;
+      }
+      result.git = { branch, dirty };
+    } catch (_) { result.git = null; }
+
+    return result;
+  });
+}
+
 // ── Config IPC ───────────────────────────────────────────────────────────────
 function setupConfigIPC() {
+  const shellIntegration = require('./utils/shell-integration');
+
   ipcMain.handle('config-read', () => {
     try {
       return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
@@ -214,6 +292,11 @@ function setupConfigIPC() {
   ipcMain.handle('check-setup', () => {
     return fs.existsSync(CONFIG_FILE) && fs.existsSync(path.join(SB_DIR, 'hint_daemon.py'));
   });
+
+  // ── Shell Integration ───────────────────────────────────────────────────
+  ipcMain.handle('shell-is-installed', () => shellIntegration.isInstalled());
+  ipcMain.handle('shell-install', () => shellIntegration.install(SB_DIR));
+  ipcMain.handle('shell-uninstall', () => shellIntegration.uninstall());
 }
 
 // ── App Lifecycle ────────────────────────────────────────────────────────────
@@ -221,6 +304,7 @@ app.whenReady().then(() => {
   createWindow();
   setupPtyIPC();
   setupConfigIPC();
+  setupStatsIPC();
   startDaemon();
   watchHints();
 
@@ -231,8 +315,9 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (daemon) daemon.stop();
-  if (ptyProcess) ptyProcess.kill();
+  if (ptyProcess) { try { ptyProcess.kill(); } catch (_) {} }
   if (hintsWatcher) hintsWatcher.close();
+  if (hintsInterval) clearInterval(hintsInterval);
   app.quit();
 });
 

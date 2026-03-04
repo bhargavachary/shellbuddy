@@ -707,7 +707,9 @@ for f in \
     "$REPO_DIR/scripts/show_stats.sh" \
     "$REPO_DIR/scripts/toggle_hints_pane.sh" \
     "$REPO_DIR/scripts/start_daemon.sh" \
-    "$REPO_DIR/scripts/verify.sh"
+    "$REPO_DIR/scripts/verify.sh" \
+    "$REPO_DIR/kb_engine.py" \
+    "$REPO_DIR/kb.json"
 do
     [[ -f "$f" ]] || MISSING_FILES+=("$f")
 done
@@ -734,6 +736,8 @@ cp "$REPO_DIR/scripts/toggle_hints_pane.sh" "$INSTALL_DIR/"
 cp "$REPO_DIR/scripts/start_daemon.sh"      "$INSTALL_DIR/"
 cp "$REPO_DIR/scripts/verify.sh"            "$INSTALL_DIR/"
 cp "$REPO_DIR/backends/"*.py               "$INSTALL_DIR/backends/"
+cp "$REPO_DIR/kb_engine.py"                "$INSTALL_DIR/"
+cp "$REPO_DIR/kb.json"                     "$INSTALL_DIR/"
 
 chmod +x "$INSTALL_DIR"/*.sh
 
@@ -789,6 +793,7 @@ ok "Config written to $CONFIG_JSON"
 
 ok "Scripts installed"
 info "hint_daemon.py, log_cmd.sh, show_hints.sh, show_stats.sh, toggle_hints_pane.sh"
+info "kb_engine.py, kb.json (1835-rule knowledge base)"
 info "backends/copilot.py, backends/ollama.py, backends/openai_compat.py"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1369,6 +1374,8 @@ _check() {
 _check "Scripts installed"            "[[ -f '$INSTALL_DIR/hint_daemon.py' ]]"
 _check "Config file"                 "[[ -f '$INSTALL_DIR/config.json' ]]"
 _check "Backends installed"           "[[ -f '$INSTALL_DIR/backends/copilot.py' ]]"
+_check "KB engine"                   "[[ -f '$INSTALL_DIR/kb_engine.py' ]]"
+_check "KB rules"                    "[[ -f '$INSTALL_DIR/kb.json' ]]"
 _check "log_cmd.sh executable"        "[[ -x '$INSTALL_DIR/log_cmd.sh' ]]"
 _check "show_hints.sh executable"     "[[ -x '$INSTALL_DIR/show_hints.sh' ]]"
 _check "show_stats.sh present"        "[[ -f '$INSTALL_DIR/show_stats.sh' ]]"
@@ -1441,7 +1448,7 @@ if [[ "$BACKEND" == "ollama" ]]; then
     (( STEP_N++ )) || true
 fi
 
-printf "  ${C_CYAN}%d.${C_RESET} ${C_BOLD}tmuxdstart${C_RESET}  ${C_DIM}(or: tmux new -s dev)${C_RESET}\n" $STEP_N
+printf "  ${C_CYAN}%d.${C_RESET} ${C_BOLD}tmux new -s dev${C_RESET}  ${C_DIM}(opens a tmux session)${C_RESET}\n" $STEP_N
 (( STEP_N++ )) || true
 
 printf "  ${C_CYAN}%d.${C_RESET} ${C_BOLD}sb${C_RESET}  ${C_DIM}(or Ctrl+A H inside tmux)${C_RESET}\n" $STEP_N
