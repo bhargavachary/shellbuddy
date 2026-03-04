@@ -822,7 +822,7 @@ elif [[ -f "$TMUX_CONF" ]]; then
         case "$TMUX_CHOICE" in
             1)
                 printf '\n# ── shellbuddy: Ctrl+A H toggles hints pane ──────────────────\n' >> "$TMUX_CONF"
-                printf 'bind H run-shell "%s/toggle_hints_pane.sh"\n' "$INSTALL_DIR" >> "$TMUX_CONF"
+                printf "bind H run-shell 'zsh \"\${SHELLBUDDY_DIR:-%s}/toggle_hints_pane.sh\"'\n" "$INSTALL_DIR" >> "$TMUX_CONF"
                 ok "Keybinding appended to ~/.tmux.conf"
                 ;;
             2)
@@ -832,7 +832,7 @@ elif [[ -f "$TMUX_CONF" ]]; then
                 ;;
             *)
                 warn "Skipped — add manually:"
-                info "  bind H run-shell \"$INSTALL_DIR/toggle_hints_pane.sh\""
+                info "  bind H run-shell 'zsh \"\${SHELLBUDDY_DIR:-$INSTALL_DIR}/toggle_hints_pane.sh\"'"
                 ;;
         esac
     fi
