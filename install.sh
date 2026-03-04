@@ -1068,6 +1068,8 @@ function /tip() {
             printf '\033[36m  Config:       \033[0m %s\n' "\$cfg"
             printf '\033[33m  Hint backend: \033[0m %s / %s\n' "\$(_sb_cfg hint_backend)" "\$(_sb_cfg hint_model)"
             printf '\033[33m  /tip backend: \033[0m %s / %s\n' "\$(_sb_cfg tip_backend)" "\$(_sb_cfg tip_model)"
+            local _ov=\$(python3 -c "import json,os; f='\$SHELLBUDDY_DIR/config.json'; c=json.load(open(f)) if os.path.exists(f) else {}; k=['hint_interval_secs','ai_throttle_secs','rule_cooldown_secs','advisor_throttle_secs','advisor_window','context_max_entries','context_inject_entries','idle_timeout_secs','severity_filter','tag_filter','enable_post_mortem','enable_idle_tips']; r={x:c[x] for x in k if x in c}; print('  '.join(str(x)+'='+str(r[x]) for x in r)) if r else None" 2>/dev/null)
+            [[ -n "\$_ov" ]] && printf '\033[33m  Tunables:     \033[0m %s\n' "\$_ov"
         else
             printf '\033[31m  Config:       \033[0m not found (using defaults)\n'
         fi
@@ -1238,6 +1240,20 @@ function /tip() {
         printf '\033[2m    Edit %s\033[0m\n' "\$cfg"
         printf '\033[2m    Available backends: ollama, claude, copilot, openai\033[0m\n'
         printf '\033[2m    Then restart daemon: hints-stop && sb\033[0m\n'
+        echo ""
+        printf '\033[36m  Tunable config.json keys\033[0m \033[2m(hot-reload — no restart needed):\033[0m\n'
+        printf '\033[2m    hint_interval_secs         secs between hint checks            (default: 5)\033[0m\n'
+        printf '\033[2m    ai_throttle_secs           min secs between ambient LLM calls  (default: 15)\033[0m\n'
+        printf '\033[2m    rule_cooldown_secs         secs before repeating same rule      (default: 120)\033[0m\n'
+        printf '\033[2m    advisor_throttle_secs      min secs between advisor calls        (default: 5)\033[0m\n'
+        printf '\033[2m    advisor_window             commands the advisor sees             (default: 100)\033[0m\n'
+        printf '\033[2m    context_max_entries        max entries in unified_context.jsonl (default: 200)\033[0m\n'
+        printf '\033[2m    context_inject_entries     entries injected into prompts         (default: 30)\033[0m\n'
+        printf '\033[2m    idle_timeout_secs          secs idle before showing usage tips  (default: 90)\033[0m\n'
+        printf '\033[2m    severity_filter            ["danger","warn"] — only these severities\033[0m\n'
+        printf '\033[2m    tag_filter                 ["git","docker"]  — only rules with these tags\033[0m\n'
+        printf '\033[2m    enable_post_mortem         true/false: auto-draft commit messages (default: true)\033[0m\n'
+        printf '\033[2m    enable_idle_tips           true/false: usage tips when idle       (default: true)\033[0m\n'
         echo ""
         printf '\033[36m  Cloud backend setup:\033[0m\n'
         printf '\033[2m    Claude:   export ANTHROPIC_API_KEY=sk-...  (in .zshrc)\033[0m\n'

@@ -66,6 +66,15 @@ OLLAMA_TIMEOUT   = 90
 CTX_MAX          = 200    # max lines kept in unified_context.jsonl
 CTX_INJECT       = 30     # last N unified context entries injected into prompts
 
+# ── Runtime tunables (all overridden by config.json) ─────────────────────────
+# Severity/tag filtering — empty list = show all
+SEVERITY_FILTER    = []    # e.g. ["danger","warn"] — only show rules of these severities
+TAG_FILTER         = []    # e.g. ["git","docker"]  — only rules whose tags or cmd matches
+# Feature flags
+ENABLE_POST_MORTEM = True  # auto-draft commit messages on git commit
+ENABLE_IDLE_TIPS   = True  # show /tip usage tips during idle periods
+
+
 def _parse_jsonl_lines(lines):
     """Parse a list of raw JSONL strings, silently skipping malformed lines."""
     out = []
@@ -102,6 +111,9 @@ _config_mtime = 0.0  # track config.json mtime for hot-reload
 def _load_config():
     global HINT_BACKEND, HINT_MODEL, HINT_MODEL_CHAIN, TIP_BACKEND, TIP_MODEL
     global OLLAMA_URL, CLAUDE_MODEL, COPILOT_MODEL, OPENAI_URL, OPENAI_MODEL
+    global HINT_INTERVAL, AI_THROTTLE, RULE_COOLDOWN, ADVISOR_THROTTLE
+    global ADVISOR_WINDOW, CTX_MAX, CTX_INJECT, IDLE_TIMEOUT
+    global SEVERITY_FILTER, TAG_FILTER, ENABLE_POST_MORTEM, ENABLE_IDLE_TIPS
     global _config_mtime
 
     if not CONFIG_FILE.exists():
@@ -127,6 +139,19 @@ def _load_config():
         COPILOT_MODEL      = cfg.get("copilot_model",      COPILOT_MODEL)
         OPENAI_URL         = cfg.get("openai_url",         OPENAI_URL)
         OPENAI_MODEL       = cfg.get("openai_model",       OPENAI_MODEL)
+        # Tunable constants
+        if "hint_interval_secs"    in cfg: HINT_INTERVAL    = max(1,  int(cfg["hint_interval_secs"]))
+        if "ai_throttle_secs"      in cfg: AI_THROTTLE      = max(1,  int(cfg["ai_throttle_secs"]))
+        if "rule_cooldown_secs"    in cfg: RULE_COOLDOWN    = max(0,  int(cfg["rule_cooldown_secs"]))
+        if "advisor_throttle_secs" in cfg: ADVISOR_THROTTLE = max(1,  int(cfg["advisor_throttle_secs"]))
+        if "advisor_window"        in cfg: ADVISOR_WINDOW   = max(10, int(cfg["advisor_window"]))
+        if "context_max_entries"   in cfg: CTX_MAX          = max(50, int(cfg["context_max_entries"]))
+        if "context_inject_entries"in cfg: CTX_INJECT       = max(5,  int(cfg["context_inject_entries"]))
+        if "idle_timeout_secs"     in cfg: IDLE_TIMEOUT     = max(30, int(cfg["idle_timeout_secs"]))
+        if "severity_filter"       in cfg: SEVERITY_FILTER  = list(cfg["severity_filter"])
+        if "tag_filter"            in cfg: TAG_FILTER        = list(cfg["tag_filter"])
+        if "enable_post_mortem"    in cfg: ENABLE_POST_MORTEM = bool(cfg["enable_post_mortem"])
+        if "enable_idle_tips"      in cfg: ENABLE_IDLE_TIPS  = bool(cfg["enable_idle_tips"])
 
 
 def _load_silenced_rules() -> dict:
@@ -139,6 +164,35 @@ def _load_silenced_rules() -> dict:
         return {k: v for k, v in data.items() if v == 0 or v > now}
     except Exception:
         return {}
+
+
+# ── KB hot-reload ─────────────────────────────────────────────────────────────
+_kb_mtime = 0.0
+
+def _maybe_reload_kb():
+    """Hot-reload kb.json when the file changes on disk. No daemon restart needed."""
+    global _kb_mtime
+    if not (_KB_ENGINE and _KB_ENGINE.loaded):
+        return
+    # Mirror KBEngine's path priority: installed copy wins over repo copy
+    _ik  = Path.home() / ".shellbuddy" / "kb.json"
+    path = _ik if _ik.exists() else (_SCRIPT_DIR.parent / "kb.json")
+    if not path.exists():
+        return
+    try:
+        mtime = path.stat().st_mtime
+        if _kb_mtime == 0.0:
+            _kb_mtime = mtime
+            return  # first call — record baseline, don't trigger spurious reload
+        if mtime == _kb_mtime:
+            return
+        old_count = _KB_ENGINE._count
+        _KB_ENGINE.load(str(path))
+        _kb_mtime = mtime
+        print(f"  kb hot-reload: {path.name} changed ({old_count} → {_KB_ENGINE._count} rules)",
+              flush=True)
+    except Exception as e:
+        print(f"  kb hot-reload error: {e}", flush=True)
 
 
 def _update_pane_height():
@@ -1147,9 +1201,19 @@ def get_rule_hints(recent_cmds, last_shown):
     # Delegate to KB engine if loaded (dispatcher architecture, sub-ms per cmd)
     if _KB_ENGINE and _KB_ENGINE.loaded:
         results = _KB_ENGINE.get_hints(recent_cmds, last_shown, cooldown=RULE_COOLDOWN)
-        # results is list of (rule_id, hint_str, entry) — filter silenced, return (id, hint_str)
-        return [(rid, hint_str) for rid, hint_str, _ in results
-                if rid not in silenced]
+        out = []
+        for rid, hint_str, entry in results:
+            if rid in silenced:
+                continue
+            if SEVERITY_FILTER and entry.get("severity", "tip") not in SEVERITY_FILTER:
+                continue
+            if TAG_FILTER:
+                etags = entry.get("tags", [])
+                ecmd  = entry.get("cmd", "")
+                if not (any(t in TAG_FILTER for t in etags) or ecmd in TAG_FILTER):
+                    continue
+            out.append((rid, hint_str))
+        return out
 
     # Legacy fallback: flat UPGRADE_RULES scan
     cmd_texts = [c.get("cmd", "") for c in recent_cmds]
@@ -1317,6 +1381,17 @@ def run():
         print(f"  kb engine: {_KB_ENGINE.stats}", flush=True)
     if not _AVAILABLE_BACKENDS:
         print(f"  WARNING: no AI backend available", flush=True)
+    # Log active tunables so daemon.log is self-documenting
+    print(f"  tunables: hint_interval={HINT_INTERVAL}s  ai_throttle={AI_THROTTLE}s"
+          f"  rule_cooldown={RULE_COOLDOWN}s  advisor_throttle={ADVISOR_THROTTLE}s", flush=True)
+    if SEVERITY_FILTER:
+        print(f"  severity_filter: {SEVERITY_FILTER}", flush=True)
+    if TAG_FILTER:
+        print(f"  tag_filter: {TAG_FILTER}", flush=True)
+    if not ENABLE_POST_MORTEM:
+        print(f"  post-mortem: DISABLED (enable_post_mortem=false in config)", flush=True)
+    if not ENABLE_IDLE_TIPS:
+        print(f"  idle tips: DISABLED (enable_idle_tips=false in config)", flush=True)
 
     try:
         while True:
@@ -1327,8 +1402,9 @@ def run():
             if _ctx_append_count >= 50:
                 _ctx_compact()
 
-            # Hot-reload config.json if changed + update pane height
+            # Hot-reload config.json and kb.json if changed + update pane height
             _load_config()
+            _maybe_reload_kb()
             _update_pane_height()
 
             now = time.time()
@@ -1387,7 +1463,7 @@ def run():
                                     "cwd": c.get("cwd", "")})
 
                     # Post-mortem: fire on git commit (once per commit)
-                    if _pm_future is None or _pm_future.done():
+                    if ENABLE_POST_MORTEM and (_pm_future is None or _pm_future.done()):
                         for c in new_cmds[-5:]:
                             if _is_git_commit(c.get("cmd", "")) and current_count != _last_post_mortem_cmd:
                                 pm_cmds = _parse_jsonl_lines(all_lines[-_POST_MORTEM_WINDOW:])
@@ -1425,7 +1501,7 @@ def run():
                 last_cmd_count = current_count
                 last_cwd = cwd
 
-            elif is_idle:
+            elif is_idle and ENABLE_IDLE_TIPS:
                 # No new commands for IDLE_TIMEOUT seconds — show rotating usage tips
                 rule_hints = get_rule_hints(recent, rule_last_shown)
                 write_hints(rule_hints, "", cwd, current_count, idle=True)
