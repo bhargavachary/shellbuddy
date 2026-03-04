@@ -21,6 +21,7 @@ Post-mortem: auto-drafted commit messages on git commit (uses hint_model_chain)
 """
 
 import os, sys, time, json, subprocess, re, urllib.request, urllib.error, threading, signal
+import concurrent.futures
 from pathlib import Path
 from collections import Counter, deque
 from datetime import datetime
@@ -52,7 +53,7 @@ OPENAI_MODEL    = "gpt-4o-mini"
 
 POLL_INTERVAL    = 1      # seconds between tip checks
 HINT_INTERVAL    = 5      # seconds between hint log checks
-AI_THROTTLE      = 25     # seconds between ambient LLM hint calls
+AI_THROTTLE      = 15     # seconds between ambient LLM hint calls
 ADVISOR_EVERY    = 1      # advisor fires every new command (debounced)
 ADVISOR_THROTTLE = 5      # min seconds between advisor calls
 WINDOW           = 50     # commands sent to ambient LLM
@@ -93,28 +94,38 @@ except Exception as _e:
     print(f"  kb_engine not loaded ({_e}), using legacy rules", flush=True)
 
 
+_config_lock = threading.Lock()
+_config_mtime = 0.0  # track config.json mtime for hot-reload
+
+
 def _load_config():
     global HINT_BACKEND, HINT_MODEL, HINT_MODEL_CHAIN, TIP_BACKEND, TIP_MODEL
     global OLLAMA_URL, CLAUDE_MODEL, COPILOT_MODEL, OPENAI_URL, OPENAI_MODEL
+    global _config_mtime
 
     if not CONFIG_FILE.exists():
         return
     try:
+        mtime = CONFIG_FILE.stat().st_mtime
+        if mtime == _config_mtime:
+            return  # unchanged since last load
         cfg = json.loads(CONFIG_FILE.read_text())
+        _config_mtime = mtime
     except Exception as e:
         print(f"  warning: bad config.json — {e}", flush=True)
         return
 
-    HINT_BACKEND       = cfg.get("hint_backend",       HINT_BACKEND)
-    HINT_MODEL         = cfg.get("hint_model",         HINT_MODEL)
-    HINT_MODEL_CHAIN   = cfg.get("hint_model_chain",   HINT_MODEL_CHAIN)
-    TIP_BACKEND        = cfg.get("tip_backend",        TIP_BACKEND)
-    TIP_MODEL          = cfg.get("tip_model",          TIP_MODEL)
-    OLLAMA_URL         = cfg.get("ollama_url",         OLLAMA_URL)
-    CLAUDE_MODEL       = cfg.get("claude_model",       CLAUDE_MODEL)
-    COPILOT_MODEL      = cfg.get("copilot_model",      COPILOT_MODEL)
-    OPENAI_URL         = cfg.get("openai_url",         OPENAI_URL)
-    OPENAI_MODEL       = cfg.get("openai_model",       OPENAI_MODEL)
+    with _config_lock:
+        HINT_BACKEND       = cfg.get("hint_backend",       HINT_BACKEND)
+        HINT_MODEL         = cfg.get("hint_model",         HINT_MODEL)
+        HINT_MODEL_CHAIN   = cfg.get("hint_model_chain",   HINT_MODEL_CHAIN)
+        TIP_BACKEND        = cfg.get("tip_backend",        TIP_BACKEND)
+        TIP_MODEL          = cfg.get("tip_model",          TIP_MODEL)
+        OLLAMA_URL         = cfg.get("ollama_url",         OLLAMA_URL)
+        CLAUDE_MODEL       = cfg.get("claude_model",       CLAUDE_MODEL)
+        COPILOT_MODEL      = cfg.get("copilot_model",      COPILOT_MODEL)
+        OPENAI_URL         = cfg.get("openai_url",         OPENAI_URL)
+        OPENAI_MODEL       = cfg.get("openai_model",       OPENAI_MODEL)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -485,21 +496,49 @@ def call_ai_tip(prompt):
 _ctx_lock = threading.Lock()
 
 
+def _sanitize_for_ctx(text: str, max_len: int = 300) -> str:
+    """Strip newlines/control chars and truncate for safe JSONL embedding."""
+    text = re.sub(r'[\x00-\x1f\x7f]+', ' ', text)  # control chars → space
+    text = text.strip()[:max_len]
+    json.dumps(text)  # validate it round-trips cleanly (raises on bad encoding)
+    return text
+
+
+_ctx_append_count = 0  # track appends for periodic compaction
+
+
 def ctx_append(entry: dict):
-    """Append one event to unified_context.jsonl. Thread-safe. Trims to CTX_MAX."""
+    """Append one event to unified_context.jsonl. Thread-safe. O(1) append."""
+    global _ctx_append_count
     entry["ts"] = datetime.now().strftime("%H:%M:%S")
     line = json.dumps(entry, separators=(",", ":"))
     with _ctx_lock:
         try:
-            existing = UNIFIED_CTX.read_text().splitlines() if UNIFIED_CTX.exists() else []
-            existing.append(line)
-            if len(existing) > CTX_MAX:
-                existing = existing[-CTX_MAX:]
-            tmp = UNIFIED_CTX.with_suffix(".tmp")
-            tmp.write_text("\n".join(existing) + "\n")
-            tmp.rename(UNIFIED_CTX)
+            with open(UNIFIED_CTX, "a") as f:
+                f.write(line + "\n")
+            _ctx_append_count += 1
         except Exception as e:
             print(f"  ctx_append error: {e}", flush=True)
+
+
+def _ctx_compact():
+    """Trim unified_context.jsonl to CTX_MAX lines. Called periodically from main loop."""
+    global _ctx_append_count
+    with _ctx_lock:
+        try:
+            if not UNIFIED_CTX.exists():
+                return
+            lines = UNIFIED_CTX.read_text().splitlines()
+            if len(lines) <= CTX_MAX:
+                _ctx_append_count = 0
+                return
+            trimmed = lines[-CTX_MAX:]
+            tmp = UNIFIED_CTX.with_suffix(".tmp")
+            tmp.write_text("\n".join(trimmed) + "\n")
+            tmp.rename(UNIFIED_CTX)
+            _ctx_append_count = 0
+        except Exception as e:
+            print(f"  ctx_compact error: {e}", flush=True)
 
 
 def ctx_read(n=CTX_INJECT) -> list[dict]:
@@ -546,6 +585,9 @@ def ctx_to_prompt_block(entries: list[dict]) -> str:
     return "\n".join(lines)
 
 
+_last_advisor_text = ""   # populated by run_advisor(), shown briefly in hints pane
+_advisor_text_ts   = 0.0  # when advisor text was set (cleared after 60s)
+
 # ── Advisor ───────────────────────────────────────────────────────────────────
 
 def build_advisor_prompt(recent_cmds, cwd, ctx_block):
@@ -575,6 +617,7 @@ def build_advisor_prompt(recent_cmds, cwd, ctx_block):
 
 def run_advisor(recent_cmds, cwd):
     """Layer 2: background thread. Calls AI, writes to unified context log."""
+    global _last_advisor_text, _advisor_text_ts
     try:
         ctx_entries = ctx_read(n=20)
         ctx_block = ctx_to_prompt_block(ctx_entries)
@@ -590,6 +633,10 @@ def run_advisor(recent_cmds, cwd):
             "prediction": lines[2] if len(lines) > 2 else "",
         }
         ctx_append(entry)
+        # Surface observation in hints pane (shown for 60s)
+        if entry["observation"]:
+            _last_advisor_text = entry["observation"][:65]
+            _advisor_text_ts = time.time()
         print(f"  advisor: {entry['intent'][:60]}", flush=True)
     except Exception as e:
         print(f"  advisor error: {e}", flush=True)
@@ -607,8 +654,16 @@ _POST_MORTEM_WINDOW = 50  # commands to look back
 
 
 def _is_git_commit(cmd: str) -> bool:
-    """Return True if the command is a git commit (not amend, not --no-edit)."""
-    return bool(re.match(r"^git\s+commit\b", cmd.strip()))
+    """Return True if the command is a git commit that needs a message drafted.
+    Skip if user already provided one via -m/--message or --no-edit."""
+    cmd = cmd.strip()
+    if not re.match(r"^git\s+commit\b", cmd):
+        return False
+    if re.search(r'\s-[a-zA-Z]*m[\s=]', cmd) or '--message' in cmd:
+        return False
+    if '--no-edit' in cmd:
+        return False
+    return True
 
 
 def build_post_mortem_prompt(recent_cmds, cwd, ctx_block):
@@ -656,7 +711,7 @@ def run_post_mortem(recent_cmds, cwd):
             return
 
         POST_MORTEM_OUT.write_text(result.strip())
-        ctx_append({"type": "post_mortem", "text": result[:200]})
+        ctx_append({"type": "post_mortem", "text": _sanitize_for_ctx(result, 200)})
         print(f"  post-mortem written ({len(result)} chars)", flush=True)
     except Exception as e:
         print(f"  post-mortem error: {e}", flush=True)
@@ -687,12 +742,25 @@ def _detect_intent(cmds):
     return None
 
 
+_project_cache = {}  # {cwd: (signals_list, timestamp)}
+_PROJECT_CACHE_TTL = 30  # seconds
+
+
 def build_hint_prompt(recent_cmds, cwd):
     cwd_path = Path(cwd)
-    project_signals = []
-    for indicator, lang in PROJECT_INDICATORS:
-        if (cwd_path / indicator).exists():
-            project_signals.append(lang)
+    # Cached project detection — avoids 10+ stat() calls per hint cycle
+    cached = _project_cache.get(cwd)
+    if cached and (time.time() - cached[1]) < _PROJECT_CACHE_TTL:
+        project_signals = cached[0]
+    else:
+        project_signals = []
+        for indicator, lang in PROJECT_INDICATORS:
+            try:
+                if (cwd_path / indicator).exists():
+                    project_signals.append(lang)
+            except (PermissionError, OSError):
+                pass
+        _project_cache[cwd] = (project_signals, time.time())
 
     cmd_summary = "\n".join(
         f"  {c.get('ts', '')[-8:]}  {c.get('cmd', '')}" for c in recent_cmds[-10:]
@@ -787,6 +855,9 @@ def handle_tip_query():
     if not TIP_QUERY.exists():
         return False
     try:
+        if TIP_QUERY.stat().st_size > 10_000:  # 10KB max — reject oversized queries
+            TIP_QUERY.unlink(missing_ok=True)
+            return False
         query = TIP_QUERY.read_text().strip()
         TIP_QUERY.unlink(missing_ok=True)
         if not query:
@@ -821,7 +892,7 @@ def handle_tip_query():
             result = f"[{TIP_BACKEND}:{TIP_MODEL} returned empty — check: hints-log]"
 
         # Log the answer to unified context
-        ctx_append({"type": "tip_a", "text": result[:300]})
+        ctx_append({"type": "tip_a", "text": _sanitize_for_ctx(result)})
 
         tmp = TIP_RESULT.with_suffix(".tmp")
         tmp.write_text(result)
@@ -944,6 +1015,10 @@ def write_hints(rule_hints, ai_hints, cwd, cmd_count, thinking=False, idle=False
             for h in ai_lines:
                 content.append(h[:65])
 
+    # Show advisor observation if fresh (≤60s old)
+    if _last_advisor_text and (time.time() - _advisor_text_ts) < 60:
+        content.append(f"  ~ {_last_advisor_text}")
+
     # Build final line list: header + sep + content, padded to MAX_HINT_LINES+2
     lines = [header, sep] + content
     while len(lines) < MAX_HINT_LINES + 2:
@@ -965,6 +1040,7 @@ def run():
         LOCK_FILE.unlink(missing_ok=True)
         sys.exit(0)
     signal.signal(signal.SIGTERM, _handle_sigterm)
+    signal.signal(signal.SIGPIPE, signal.SIG_IGN)  # don't crash if tmux pane closes
 
     _load_config()
     _probe_backends()
@@ -978,9 +1054,10 @@ def run():
     last_hint_check       = 0.0
     last_activity_time    = time.time()  # tracks when last command was seen
     rule_last_shown       = {}
-    _hint_thread          = None
-    _advisor_thread       = None
-    _post_mortem_thread   = None
+    _executor             = concurrent.futures.ThreadPoolExecutor(max_workers=3, thread_name_prefix="sb")
+    _hint_future          = None  # type: concurrent.futures.Future | None
+    _advisor_future       = None  # type: concurrent.futures.Future | None
+    _pm_future            = None  # type: concurrent.futures.Future | None
     _last_post_mortem_cmd = 0  # total_count at last post-mortem fire
 
     ctx_count = len(ctx_read(n=1000))
@@ -1002,6 +1079,13 @@ def run():
         while True:
             # Layer 3: /tip has highest priority
             handle_tip_query()
+
+            # Periodic compaction of unified context log
+            if _ctx_append_count >= 50:
+                _ctx_compact()
+
+            # Hot-reload config.json if changed
+            _load_config()
 
             now = time.time()
             if (now - last_hint_check) < HINT_INTERVAL:
@@ -1059,47 +1143,38 @@ def run():
                                     "cwd": c.get("cwd", "")})
 
                     # Post-mortem: fire on git commit (once per commit)
-                    if (_post_mortem_thread is None or not _post_mortem_thread.is_alive()):
+                    if _pm_future is None or _pm_future.done():
                         for c in new_cmds[-5:]:
                             if _is_git_commit(c.get("cmd", "")) and current_count != _last_post_mortem_cmd:
                                 pm_cmds = _parse_jsonl_lines(all_lines[-_POST_MORTEM_WINDOW:])
-                                def _run_pm(r=pm_cmds, d=cwd):
-                                    run_post_mortem(r, d)
-                                _post_mortem_thread = threading.Thread(target=_run_pm, daemon=True)
-                                _post_mortem_thread.start()
+                                _pm_future = _executor.submit(run_post_mortem, pm_cmds, cwd)
                                 _last_post_mortem_cmd = current_count
                                 break
 
-                # Layer 1b: ambient LLM hint — background thread, non-blocking
-                if ai_ready and (_hint_thread is None or not _hint_thread.is_alive()):
-                    write_hints(rule_hints, last_ai_text, cwd, current_count, thinking=True)
+                # Always render rule hints immediately (sub-ms), even while AI is pending
+                write_hints(rule_hints, last_ai_text, cwd, current_count,
+                            thinking=(ai_ready and (_hint_future is None or _hint_future.done())))
 
+                # Layer 1b: ambient LLM hint — background future, non-blocking
+                if ai_ready and (_hint_future is None or _hint_future.done()):
                     def _run_hint(r=recent, c=cwd, cc=current_count):
                         nonlocal last_ai_text, last_ai_call
                         result = call_ai_hint(build_hint_prompt(r, c))
                         if result:
                             last_ai_text = result
-                            ctx_append({"type": "ambient", "text": result[:300]})
+                            ctx_append({"type": "ambient", "text": _sanitize_for_ctx(result)})
                         last_ai_call = time.time()
                         write_hints(get_rule_hints(r, rule_last_shown),
                                     last_ai_text, c, cc)
 
-                    _hint_thread = threading.Thread(target=_run_hint, daemon=True)
-                    _hint_thread.start()
-                else:
-                    write_hints(rule_hints, last_ai_text, cwd, current_count)
+                    _hint_future = _executor.submit(_run_hint)
 
                 # Layer 2: advisor — debounced
                 cmds_since_advisor = current_count - last_advisor_cmd
                 advisor_ready = (now - last_advisor_call) > ADVISOR_THROTTLE
                 if (cmds_since_advisor >= ADVISOR_EVERY and advisor_ready and
-                        (_advisor_thread is None or not _advisor_thread.is_alive())):
-
-                    def _run_advisor(r=all_recent, c=cwd):
-                        run_advisor(r, c)
-
-                    _advisor_thread = threading.Thread(target=_run_advisor, daemon=True)
-                    _advisor_thread.start()
+                        (_advisor_future is None or _advisor_future.done())):
+                    _advisor_future = _executor.submit(run_advisor, all_recent, cwd)
                     last_advisor_call = now
                     last_advisor_cmd  = current_count
 
@@ -1116,6 +1191,7 @@ def run():
     except KeyboardInterrupt:
         pass
     finally:
+        _executor.shutdown(wait=False, cancel_futures=True)
         LOCK_FILE.unlink(missing_ok=True)
         print("shellbuddy daemon stopped.", flush=True)
 

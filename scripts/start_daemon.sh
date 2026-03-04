@@ -22,6 +22,11 @@ if [[ -f "$DAEMON_PID" ]]; then
     rm -f "$DAEMON_PID"
 fi
 
+# Rotate daemon log if >1MB
+if [[ -f "$DAEMON_LOG" ]] && (( $(stat -f%z "$DAEMON_LOG" 2>/dev/null || echo 0) > 1048576 )); then
+    tail -200 "$DAEMON_LOG" > "${DAEMON_LOG}.tmp" && mv "${DAEMON_LOG}.tmp" "$DAEMON_LOG"
+fi
+
 # Launch daemon (detached, not a child of this shell)
 nohup "$PYTHON" "$DAEMON_PY" >> "$DAEMON_LOG" 2>&1 &
 disown $!

@@ -19,6 +19,8 @@ import urllib.error
 from pathlib import Path
 
 TOKEN_CACHE = Path(os.environ.get("SHELLBUDDY_DIR", str(Path.home() / ".shellbuddy"))) / "copilot_token.json"
+_NEGATIVE_CACHE_TS = 0.0  # timestamp of last failed token refresh
+_NEGATIVE_CACHE_TTL = 30  # seconds to cache a failure
 
 try:
     from Crypto.Cipher import AES
@@ -92,15 +94,29 @@ def get_copilot_token():
                 return cached["token"], cached["api_url"]
         except Exception:
             pass
+    global _NEGATIVE_CACHE_TS
+    # Skip if we recently failed (avoid hammering GitHub API)
+    if time.time() - _NEGATIVE_CACHE_TS < _NEGATIVE_CACHE_TTL:
+        return None, None
     gh_token = _vscode_github_token()
     if not gh_token:
+        _NEGATIVE_CACHE_TS = time.time()
         return None, None
-    try:
-        token, api_url, expires_at = _refresh_copilot_token(gh_token)
-        TOKEN_CACHE.write_text(json.dumps({"token": token, "api_url": api_url, "expires_at": expires_at}))
-        return token, api_url
-    except Exception:
-        return None, None
+    # Try twice with a short backoff
+    for attempt in range(2):
+        try:
+            token, api_url, expires_at = _refresh_copilot_token(gh_token)
+            TOKEN_CACHE.write_text(json.dumps({"token": token, "api_url": api_url, "expires_at": expires_at}))
+            os.chmod(TOKEN_CACHE, 0o600)  # restrict token to owner-only
+            return token, api_url
+        except Exception as e:
+            if attempt == 0:
+                print(f"  copilot token refresh failed ({e}), retrying...", flush=True)
+                time.sleep(2)
+            else:
+                print(f"  copilot token refresh failed permanently: {e}", flush=True)
+                _NEGATIVE_CACHE_TS = time.time()
+                return None, None
 
 
 def call_copilot(prompt, model="gpt-4.1", max_tokens=150):

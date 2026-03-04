@@ -19,17 +19,35 @@ HINTS_FILE="$SB_DIR/current_hints.txt"
 DAEMON_PID="$SB_DIR/daemon.pid"
 
 C_RESET='\033[0m'
-C_DIM='\033[38;5;242m'            # mid-grey  (was \033[2m → near-black on dark bg)
-C_CYAN='\033[1;36m'
-C_CYAN_DIM='\033[38;5;73m'        # muted teal (was dim cyan → near-black)
-C_GREEN='\033[38;5;111m'          # soft periwinkle — AI ambient hints
-C_GREEN_DIM='\033[38;5;111m'
-C_YELLOW='\033[38;5;216m'         # light peach — rule hints
-C_YELLOW_DIM='\033[38;5;216m'
-C_MAGENTA='\033[38;5;183m'        # soft lilac  (was \033[35m → dark magenta)
-C_MAGENTA_BOLD='\033[38;5;189m'   # light lavender
-C_BLUE_DIM='\033[38;5;110m'       # steel blue  (was dim blue → near-black)
-C_WHITE_DIM='\033[38;5;250m'      # light grey  (was dim white → near-black)
+
+# Detect color capability — use 256-color palette if supported, else basic ANSI
+_NCOLORS=$(tput colors 2>/dev/null || echo 8)
+if (( _NCOLORS >= 256 )); then
+    C_DIM='\033[38;5;242m'            # mid-grey
+    C_CYAN='\033[1;36m'
+    C_CYAN_DIM='\033[38;5;73m'        # muted teal
+    C_GREEN='\033[38;5;111m'          # soft periwinkle — AI ambient hints
+    C_GREEN_DIM='\033[38;5;111m'
+    C_YELLOW='\033[38;5;216m'         # light peach — rule hints
+    C_YELLOW_DIM='\033[38;5;216m'
+    C_MAGENTA='\033[38;5;183m'        # soft lilac
+    C_MAGENTA_BOLD='\033[38;5;189m'   # light lavender
+    C_BLUE_DIM='\033[38;5;110m'       # steel blue
+    C_WHITE_DIM='\033[38;5;250m'      # light grey
+else
+    # 16-color fallback — readable on any terminal
+    C_DIM='\033[2m'
+    C_CYAN='\033[1;36m'
+    C_CYAN_DIM='\033[36m'
+    C_GREEN='\033[32m'
+    C_GREEN_DIM='\033[32m'
+    C_YELLOW='\033[33m'
+    C_YELLOW_DIM='\033[33m'
+    C_MAGENTA='\033[35m'
+    C_MAGENTA_BOLD='\033[1;35m'
+    C_BLUE_DIM='\033[34m'
+    C_WHITE_DIM='\033[37m'
+fi
 
 printf '\033[2J\033[H'
 
