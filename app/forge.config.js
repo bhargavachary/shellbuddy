@@ -5,6 +5,7 @@ module.exports = {
     name: 'ShellBuddy',
     executableName: 'ShellBuddy',
     appBundleId: 'com.shellbuddy.app',
+    asar: true,
     icon: path.join(__dirname, 'assets', 'icon'),
     extraResource: [
       path.join(__dirname, '..', 'scripts'),
