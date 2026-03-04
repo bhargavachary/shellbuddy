@@ -92,36 +92,42 @@ else
 fi
 
 # ── 3. Remove shellbuddy block from ~/.zshrc ──────────────────────────────────
-if [[ -f "$ZSHRC" ]] && /usr/bin/grep -q "# shellbuddy" "$ZSHRC" 2>/dev/null; then
+if [[ -f "$ZSHRC" ]] && /usr/bin/grep -q "shellbuddy" "$ZSHRC" 2>/dev/null; then
     if ask "Remove shellbuddy block from $ZSHRC?"; then
         # Back up first
         cp "$ZSHRC" "${ZSHRC}.shellbuddy_uninstall_bak"
         ok "Backed up $ZSHRC → ${ZSHRC}.shellbuddy_uninstall_bak"
 
-        # The block is delimited by lines matching '# ── shellbuddy'
-        # Strategy: delete from '# ── shellbuddy' through to the next
-        # blank line that follows the closing brace of the last function,
-        # OR through the next '# ──' section header that is NOT shellbuddy.
-        # Most reliable: delete every line from '# ── shellbuddy' to
-        # a line that is either empty after the block or starts another section.
-        # Since .zshrc may have the block duplicated, run until clean.
+        before=$(/usr/bin/grep -c "shellbuddy" "$ZSHRC" 2>/dev/null || echo 0)
 
-        local before after
-        before=$(/usr/bin/grep -c "# shellbuddy" "$ZSHRC" 2>/dev/null || echo 0)
+        # Use python3 for reliable multi-line block removal — same logic as
+        # install.sh uses when it replaces an existing shellbuddy block.
+        python3 - "$ZSHRC" << 'PYEOF'
+import sys, re
+path = sys.argv[1]
+with open(path) as f:
+    text = f.read()
+# Remove full install.sh block: '# ── shellbuddy' section to next section or EOF
+text = re.sub(r'\n# ── shellbuddy ─+.*?(?=\n# ── (?!shellbuddy)|\Z)', '', text, flags=re.DOTALL)
+# Remove leftover standalone shellbuddy section-header lines
+text = re.sub(r'\n# ── shellbuddy[^\n]*', '', text)
+# Remove patch_install.sh sourcing: comment + source line together
+text = re.sub(r'\n# shellbuddy[^\n]*\nsource[^\n]*rc_patch\.zsh[^\n]*', '', text)
+# Remove any remaining rc_patch.zsh source lines (safety net)
+text = re.sub(r'\nsource[^\n]*shellbuddy[^\n]*rc_patch\.zsh[^\n]*', '', text)
+# Remove leftover SHELLBUDDY_DIR export lines
+text = re.sub(r'\nexport SHELLBUDDY_DIR=[^\n]*', '', text)
+# Remove remaining standalone shellbuddy comment lines
+text = re.sub(r'\n# shellbuddy[^\n]*', '', text)
+# Collapse 3+ consecutive blank lines to 1
+text = re.sub(r'\n{3,}', '\n\n', text)
+with open(path, 'w') as f:
+    f.write(text)
+PYEOF
 
-        # Pass 1: remove lines from '# ── shellbuddy' marker to the next
-        # line starting with '# ──' that does NOT contain 'shellbuddy'
-        sed -i '' '/# ── shellbuddy/,/^# ── [^s][^h]/{ /^# ── [^s][^h]/!d; }' "$ZSHRC" 2>/dev/null || true
-        # Pass 2: remove any remaining standalone '# ── shellbuddy' marker lines
-        sed -i '' '/# ── shellbuddy/d' "$ZSHRC" 2>/dev/null || true
-        # Pass 3: remove the SHELLBUDDY_DIR export line (in case it survived)
-        sed -i '' '/export SHELLBUDDY_DIR=/d' "$ZSHRC" 2>/dev/null || true
-        # Pass 4: collapse runs of 3+ blank lines to 1 (cosmetic cleanup)
-        sed -i '' '/^$/{ N; /^\n$/{ N; /^\n\n$/d; }; }' "$ZSHRC" 2>/dev/null || true
-
-        after=$(/usr/bin/grep -c "# shellbuddy" "$ZSHRC" 2>/dev/null || echo 0)
+        after=$(/usr/bin/grep -c "shellbuddy" "$ZSHRC" 2>/dev/null || echo 0)
         if (( after == 0 )); then
-            ok "Removed shellbuddy block from $ZSHRC ($before occurrences cleaned)"
+            ok "Removed shellbuddy block from $ZSHRC ($before references cleaned)"
         else
             warn "$after shellbuddy reference(s) remain in $ZSHRC — check manually"
             warn "Backup is at ${ZSHRC}.shellbuddy_uninstall_bak"
@@ -138,11 +144,29 @@ if [[ -f "$TMUX_CONF" ]] && /usr/bin/grep -q "shellbuddy\|toggle_hints_pane\|sho
     if ask "Remove shellbuddy lines from $TMUX_CONF?"; then
         cp "$TMUX_CONF" "${TMUX_CONF}.shellbuddy_uninstall_bak"
         ok "Backed up $TMUX_CONF → ${TMUX_CONF}.shellbuddy_uninstall_bak"
-        # Remove the comment + bind-key line pair
-        sed -i '' '/# ── shellbuddy: Ctrl+A H/d' "$TMUX_CONF" 2>/dev/null || true
-        sed -i '' '/toggle_hints_pane/d'          "$TMUX_CONF" 2>/dev/null || true
-        sed -i '' '/show_stats/d'                  "$TMUX_CONF" 2>/dev/null || true
+        # Use python3 to cleanly remove both install styles:
+        #   - minimal-patch block (patch_install.sh): multi-line block with start/end markers
+        #   - single keybinding comment + bind line (install.sh option 1)
+        python3 - "$TMUX_CONF" << 'PYEOF'
+import sys, re
+path = sys.argv[1]
+with open(path) as f:
+    text = f.read()
+# Remove minimal-patch block: from '# ── shellbuddy: minimal patch' to closing '# ───...' line
+text = re.sub(r'\n# ── shellbuddy: minimal patch.*?# ─{40,}\n', '\n', text, flags=re.DOTALL)
+# Remove single-line keybinding comment (install.sh option 1)
+text = re.sub(r'\n# ── shellbuddy: Ctrl\+A H[^\n]*', '', text)
+# Remove any bind lines referencing shellbuddy scripts
+text = re.sub(r'\nbind H run-shell[^\n]*(?:toggle_hints_pane|shellbuddy)[^\n]*', '', text)
+# Remove show_stats bind lines
+text = re.sub(r'\nbind[^\n]*show_stats[^\n]*', '', text)
+# Collapse 3+ consecutive blank lines to 1
+text = re.sub(r'\n{3,}', '\n\n', text)
+with open(path, 'w') as f:
+    f.write(text)
+PYEOF
         ok "Removed shellbuddy keybinding from $TMUX_CONF"
+        info "Reload tmux config: tmux source-file ~/.tmux.conf"
     else
         skip "Left $TMUX_CONF unchanged"
     fi
