@@ -19,11 +19,15 @@
         </pre>
         <h1>Welcome to ShellBuddy</h1>
         <p class="subtitle">AI-powered ambient shell hints</p>
+        <p class="subtitle" style="margin-top:8px;font-size:11px;color:var(--fg-dim)">
+          This app is your terminal. Type commands below and get<br>
+          real-time hints, tips, and AI guidance as you work.
+        </p>
       </div>
 
       <div class="wizard-step" id="step-backend">
         <h2>Choose an AI Backend</h2>
-        <p class="step-desc">ShellBuddy uses AI to generate contextual hints. Pick a backend:</p>
+        <p class="step-desc">ShellBuddy watches your commands and gives contextual hints. Pick an AI backend for smarter suggestions:</p>
         <div class="backend-options">
           <label class="backend-option">
             <input type="radio" name="backend" value="copilot">
@@ -97,14 +101,17 @@
 
     <!-- Hints Panel (resizable) -->
     <div id="hints-panel" class="hints-panel">
+      <div class="panel-label">HINTS</div>
       <div id="hints-resize" class="resize-handle"></div>
       <div id="hints-content" class="hints-content">
-        <span class="hint-placeholder">Waiting for hints... run a few commands</span>
+        <span class="hint-placeholder">Waiting for hints... type a few commands below to get started</span>
       </div>
     </div>
 
     <!-- Terminal -->
-    <div id="terminal-container" class="terminal-container"></div>
+    <div id="terminal-container" class="terminal-container">
+      <div class="panel-label terminal-label">TERMINAL</div>
+    </div>
   </div>
 
   <script src="terminal.js"></script>

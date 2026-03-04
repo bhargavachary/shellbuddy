@@ -29,6 +29,27 @@
     const terminal = new ShellTerminal(termContainer);
     await terminal.init();
 
+    // Print a welcome banner into the terminal
+    const welcome = [
+      '\x1b[1;36m',
+      '  ╭────────────────────────────────────────────────╮',
+      '  │  [>_] ShellBuddy Terminal                      │',
+      '  ╰────────────────────────────────────────────────╯\x1b[0m',
+      '',
+      '\x1b[2m  This is your terminal. Type commands here as usual.',
+      '  ShellBuddy watches what you type and shows hints above.',
+      '',
+      '  Try:  ls -la          git status          /tip help',
+      '',
+      '  Shortcuts:',
+      '    Cmd+Shift+H   toggle hints panel',
+      '    Cmd+Shift+S   toggle stats bar',
+      '    Cmd+,         open settings',
+      '    Cmd+K         clear terminal\x1b[0m',
+      '',
+    ];
+    terminal.term.write(welcome.join('\r\n') + '\r\n');
+
     // ── Hints Panel ───────────────────────────────────────────────────────
     const hintsContent = document.getElementById('hints-content');
     const hints = new HintsPanel(hintsContent);
