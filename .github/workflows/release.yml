@@ -1,0 +1,151 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+
+permissions:
+  contents: write   # needed to create/upload GitHub Releases
+
+jobs:
+  release:
+    name: Build & publish release
+    runs-on: macos-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # full history so git describe works
+
+      # ── 2. Run tests before releasing ────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install optional test dependency
+        run: pip install pycryptodome --quiet
+
+      - name: Verify syntax & run tests
+        run: |
+          python3 -m py_compile scripts/hint_daemon.py
+          python3 -m py_compile kb_engine.py
+          python3 -m py_compile backends/copilot.py
+          python3 -m py_compile backends/ollama.py
+          python3 -m py_compile backends/openai_compat.py
+          python3 -m unittest discover -s tests -v 2>&1 | tail -10
+
+      # ── 3. Build distribution tarball via git archive ─────────────────────
+      - name: Build tarball
+        id: build
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          DIST_NAME="shellbuddy-${VERSION}"
+          DIST_FILE="${DIST_NAME}.tar.gz"
+
+          # git archive produces a clean tarball: no .git, no .venv, no __pycache__
+          git archive \
+            --format=tar.gz \
+            --prefix="${DIST_NAME}/" \
+            --output="${DIST_FILE}" \
+            HEAD \
+            -- \
+            install.sh \
+            uninstall.sh \
+            kb_engine.py \
+            kb.json \
+            requirements.txt \
+            LICENSE \
+            USAGE.md \
+            SETUP.md \
+            backends/__init__.py \
+            backends/copilot.py \
+            backends/ollama.py \
+            backends/openai_compat.py \
+            scripts/hint_daemon.py \
+            scripts/log_cmd.sh \
+            scripts/show_hints.sh \
+            scripts/show_stats.sh \
+            scripts/start_daemon.sh \
+            scripts/toggle_hints_pane.sh \
+            scripts/verify.sh \
+            scripts/bootstrap.sh \
+            config/
+
+          SHA256=$(shasum -a 256 "${DIST_FILE}" | awk '{print $1}')
+          echo "dist_file=${DIST_FILE}" >> "$GITHUB_OUTPUT"
+          echo "dist_name=${DIST_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}"     >> "$GITHUB_OUTPUT"
+          echo "sha256=${SHA256}"       >> "$GITHUB_OUTPUT"
+
+          echo "Built: ${DIST_FILE}"
+          echo "SHA256: ${SHA256}"
+
+      # ── 4. Extract changelog for this version from git log ────────────────
+      - name: Generate release notes
+        id: notes
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          PREV_TAG=$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || echo "")
+
+          if [[ -n "$PREV_TAG" ]]; then
+            CHANGELOG=$(git log --oneline "${PREV_TAG}..${VERSION}" 2>/dev/null | head -30)
+          else
+            CHANGELOG=$(git log --oneline -20 2>/dev/null)
+          fi
+
+          # Write to a file to avoid quoting issues in the step output
+          {
+            echo "## Changes in ${VERSION}"
+            echo ""
+            echo '```'
+            echo "$CHANGELOG"
+            echo '```'
+            echo ""
+            echo "### Install"
+            echo ""
+            echo '```sh'
+            echo "# Homebrew (recommended)"
+            echo "brew tap bhargavachary/shellbuddy"
+            echo "brew install shellbuddy"
+            echo "shellbuddy          # run setup wizard"
+            echo ""
+            echo "# Direct (no Homebrew required)"
+            echo "curl -fsSL https://raw.githubusercontent.com/bhargavachary/shellbuddy/main/scripts/bootstrap.sh | zsh"
+            echo '```'
+            echo ""
+            echo "### Homebrew formula update"
+            echo ""
+            echo "Update \`Formula/shellbuddy.rb\` in your tap repo:"
+            echo '```'
+            echo "  url \"https://github.com/bhargavachary/shellbuddy/archive/refs/tags/${VERSION}.tar.gz\""
+            echo "  sha256 \"${{ steps.build.outputs.sha256 }}\""
+            echo '```'
+          } > release_notes.md
+          echo "notes_file=release_notes.md" >> "$GITHUB_OUTPUT"
+
+      # ── 5. Create GitHub Release and upload tarball ───────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "ShellBuddy ${{ steps.build.outputs.version }}"
+          body_path: release_notes.md
+          files: ${{ steps.build.outputs.dist_file }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+
+      # ── 6. Print formula update reminder ─────────────────────────────────
+      - name: Formula update hint
+        run: |
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Release: ${{ steps.build.outputs.version }}"
+          echo "  SHA256:  ${{ steps.build.outputs.sha256 }}"
+          echo ""
+          echo "  Update Formula/shellbuddy.rb in homebrew-shellbuddy:"
+          echo "    url  → https://github.com/bhargavachary/shellbuddy/archive/refs/tags/${{ steps.build.outputs.version }}.tar.gz"
+          echo "    sha256 → ${{ steps.build.outputs.sha256 }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
