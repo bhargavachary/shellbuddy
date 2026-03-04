@@ -38,6 +38,7 @@ LOCK_FILE        = DATA_DIR / "daemon.pid"
 TIP_QUERY        = DATA_DIR / "tip_query.txt"
 TIP_RESULT       = DATA_DIR / "tip_result.txt"
 UNIFIED_CTX      = DATA_DIR / "unified_context.jsonl"  # single truth: rules+ambient+tips
+SILENCED_RULES   = DATA_DIR / "silenced_rules.json"    # rules suppressed via /tip silence
 
 # Defaults (overridden by config.json)
 HINT_BACKEND    = "copilot"
@@ -59,7 +60,7 @@ ADVISOR_THROTTLE = 5      # min seconds between advisor calls
 WINDOW           = 50     # commands sent to ambient LLM
 ADVISOR_WINDOW   = 100    # commands the advisor sees
 MIN_COMMANDS     = 2
-MAX_HINT_LINES   = 10
+MAX_HINT_LINES   = 10  # default; dynamically updated from hints_pane_rows
 RULE_COOLDOWN    = 120
 OLLAMA_TIMEOUT   = 90
 CTX_MAX          = 200    # max lines kept in unified_context.jsonl
@@ -126,6 +127,31 @@ def _load_config():
         COPILOT_MODEL      = cfg.get("copilot_model",      COPILOT_MODEL)
         OPENAI_URL         = cfg.get("openai_url",         OPENAI_URL)
         OPENAI_MODEL       = cfg.get("openai_model",       OPENAI_MODEL)
+
+
+def _load_silenced_rules() -> dict:
+    """Load {rule_id: expiry_epoch} from silenced_rules.json. 0 = permanent."""
+    if not SILENCED_RULES.exists():
+        return {}
+    try:
+        data = json.loads(SILENCED_RULES.read_text())
+        now = time.time()
+        return {k: v for k, v in data.items() if v == 0 or v > now}
+    except Exception:
+        return {}
+
+
+def _update_pane_height():
+    """Read dynamic pane height from hints_pane_rows file (written by toggle_hints_pane.sh)."""
+    global MAX_HINT_LINES
+    rows_file = DATA_DIR / "hints_pane_rows"
+    try:
+        if rows_file.exists():
+            val = int(rows_file.read_text().strip())
+            # pane_rows - 2 (header + separator) = content lines
+            MAX_HINT_LINES = max(4, min(val - 2, 30))
+    except (ValueError, OSError):
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -346,9 +372,14 @@ PROJECT_INDICATORS = [
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _call_copilot(prompt, model=None, max_tokens=150):
+    t0 = time.perf_counter()
     try:
         from backends.copilot import call_copilot
-        return call_copilot(prompt, model=model or COPILOT_MODEL, max_tokens=max_tokens)
+        result = call_copilot(prompt, model=model or COPILOT_MODEL, max_tokens=max_tokens)
+        if result:
+            ms = (time.perf_counter() - t0) * 1000
+            print(f"  backend: copilot/{model or COPILOT_MODEL} {ms:.0f}ms", flush=True)
+        return result
     except Exception:
         return None
 
@@ -356,9 +387,12 @@ def _call_copilot(prompt, model=None, max_tokens=150):
 def _call_copilot_chain(prompt, models=None, max_tokens=150):
     """Try each model in the chain; return first successful result."""
     chain = models or HINT_MODEL_CHAIN
-    for model in chain:
+    for i, model in enumerate(chain):
         result = _call_copilot(prompt, model=model, max_tokens=max_tokens)
         if result:
+            if i > 0:
+                skipped = ", ".join(chain[:i])
+                print(f"  chain: fell back to {model} (tried: {skipped})", flush=True)
             return result
     return None
 
@@ -388,8 +422,12 @@ def _call_claude(prompt, model=None):
             },
             method="POST"
         )
+        t0 = time.perf_counter()
         with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read())["content"][0]["text"].strip()
+            result = json.loads(resp.read())["content"][0]["text"].strip()
+        ms = (time.perf_counter() - t0) * 1000
+        print(f"  backend: claude/{model} {ms:.0f}ms", flush=True)
+        return result
     except Exception as e:
         print(f"  claude error: {e}", flush=True)
         return None
@@ -414,9 +452,12 @@ def _call_ollama(prompt, model=None):
             headers={"Content-Type": "application/json"},
             method="POST"
         )
+        t0 = time.perf_counter()
         with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:
             text = json.loads(resp.read()).get("response", "").strip()
+        ms = (time.perf_counter() - t0) * 1000
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        print(f"  backend: ollama/{model} {ms:.0f}ms", flush=True)
         return text
     except Exception as e:
         print(f"  ollama error: {e}", flush=True)
@@ -446,9 +487,13 @@ def _call_openai(prompt, model=None):
             },
             method="POST"
         )
+        t0 = time.perf_counter()
         with urllib.request.urlopen(req, timeout=20) as resp:
             data = json.loads(resp.read())
-            return data["choices"][0]["message"]["content"].strip()
+        ms = (time.perf_counter() - t0) * 1000
+        result = data["choices"][0]["message"]["content"].strip()
+        print(f"  backend: openai/{model} {ms:.0f}ms", flush=True)
+        return result
     except Exception as e:
         print(f"  openai error: {e}", flush=True)
         return None
@@ -587,6 +632,9 @@ def ctx_to_prompt_block(entries: list[dict]) -> str:
 
 _last_advisor_text = ""   # populated by run_advisor(), shown briefly in hints pane
 _advisor_text_ts   = 0.0  # when advisor text was set (cleared after 60s)
+
+_last_tip_query  = ""   # last /tip question (used by /tip helpful / not-helpful)
+_last_tip_answer = ""   # last /tip answer  (used by /tip helpful / not-helpful)
 
 # ── Advisor ───────────────────────────────────────────────────────────────────
 
@@ -852,6 +900,7 @@ def build_tip_prompt(query):
 
 
 def handle_tip_query():
+    global _last_tip_query, _last_tip_answer
     if not TIP_QUERY.exists():
         return False
     try:
@@ -877,6 +926,186 @@ def handle_tip_query():
             tmp.rename(TIP_RESULT)
             return True
 
+        # ── Item 1: /tip rule <id> — explain a KB rule ────────────────────────
+        if re.match(r'^rule\s+\S', query.strip(), re.IGNORECASE):
+            rid = query.split(None, 1)[1].strip()
+            if _KB_ENGINE and _KB_ENGINE.loaded:
+                found = None
+                for entries in _KB_ENGINE._buckets.values():
+                    for _, entry in entries:
+                        if entry.get("id") == rid:
+                            found = entry
+                            break
+                    if found:
+                        break
+                if not found:
+                    for _, entry in _KB_ENGINE._generic:
+                        if entry.get("id") == rid:
+                            found = entry
+                            break
+                if found:
+                    sev = found.get("severity", "tip").upper()
+                    lines = [
+                        f"Rule ID:  {found['id']}",
+                        f"Severity: {sev}",
+                        f"Pattern:  {found.get('pattern', '')}",
+                        "",
+                        f"Hint:     {found['hint']}",
+                        "",
+                        f"Detail:   {found.get('detail', '(none)')}",
+                    ]
+                    if found.get("examples"):
+                        lines += ["", "Examples:"]
+                        lines += [f"  {ex}" for ex in found["examples"][:3]]
+                    result = "\n".join(lines)
+                else:
+                    result = (
+                        f"Rule '{rid}' not found in KB "
+                        f"({_KB_ENGINE._count} rules loaded).\n"
+                        f"Try: /tip top-rules  to see most-fired rules."
+                    )
+            else:
+                result = "KB engine not loaded — run: python3 kb_builder.py"
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
+        # ── Item 2: /tip top-rules — most-fired rules from history ───────────
+        if query.strip().lower() == "top-rules":
+            if not CMD_LOG.exists():
+                result = "No command log yet — run some commands first."
+            elif not (_KB_ENGINE and _KB_ENGINE.loaded):
+                result = "KB engine not loaded — run: python3 kb_builder.py"
+            else:
+                try:
+                    all_lines = CMD_LOG.read_text().strip().splitlines()
+                    recent_scan = _parse_jsonl_lines(all_lines[-1000:])
+                    freq: Counter = Counter()
+                    best_entry: dict = {}
+                    for item in recent_scan:
+                        cmd = item.get("cmd", "")
+                        for entry in _KB_ENGINE.scan(cmd):
+                            rid = entry["id"]
+                            freq[rid] += 1
+                            best_entry[rid] = entry
+                    if not freq:
+                        result = "No rules matched in the last 1000 commands."
+                    else:
+                        lines = [f"Top rules  (last {len(recent_scan)} commands):", ""]
+                        for i, (rid, count) in enumerate(freq.most_common(10), 1):
+                            entry = best_entry.get(rid, {})
+                            sev  = entry.get("severity", "tip")[:4]
+                            hint = entry.get("hint", rid)[:52]
+                            lines.append(f"  {i:2d}. [{count:3d}x] {sev:<4}  {rid:<28} {hint}")
+                        result = "\n".join(lines)
+                except Exception as e:
+                    result = f"[top-rules error: {e}]"
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
+        # ── Item 3: /tip history [N] — browse recent /tip Q&A pairs ─────────
+        m_hist = re.match(r'^history(?:\s+(\d+))?$', query.strip(), re.IGNORECASE)
+        if m_hist:
+            n = int(m_hist.group(1)) if m_hist.group(1) else 10
+            if not UNIFIED_CTX.exists():
+                result = "No session context yet — run some /tip queries first."
+            else:
+                try:
+                    entries = _parse_jsonl_lines(UNIFIED_CTX.read_text().strip().splitlines())
+                    pairs = []
+                    last_q = None
+                    for e in entries:
+                        if e.get("type") == "tip_q":
+                            last_q = e
+                        elif e.get("type") == "tip_a" and last_q:
+                            pairs.append((last_q, e))
+                            last_q = None
+                    if not pairs:
+                        result = "No /tip Q&A history yet."
+                    else:
+                        out = [f"/tip history  ({min(n, len(pairs))} of {len(pairs)} total)", ""]
+                        for q_e, a_e in pairs[-n:]:
+                            ts = q_e.get("ts", "")
+                            out.append(f"[{ts}] Q: {q_e.get('query', '')}")
+                            for aline in a_e.get("text", "").splitlines()[:4]:
+                                if aline.strip():
+                                    out.append(f"       {aline.strip()[:70]}")
+                            out.append("")
+                        result = "\n".join(out).rstrip()
+                except Exception as e:
+                    result = f"[history error: {e}]"
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
+        # ── Item 4: /tip context — show session context injected into prompts ─
+        if query.strip().lower() == "context":
+            ctx_entries = ctx_read(n=CTX_INJECT)
+            if not ctx_entries:
+                result = "No context yet — run some commands first."
+            else:
+                block = ctx_to_prompt_block(ctx_entries)
+                result = (
+                    f"Session context  ({len(ctx_entries)} of last {CTX_INJECT} entries):\n\n"
+                    f"{block}"
+                )
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
+        # ── Item 5: /tip silence <id> [days] — suppress a rule ───────────────
+        m_silence = re.match(r'^silence\s+(\S+)(?:\s+(\d+))?$', query.strip(), re.IGNORECASE)
+        if m_silence:
+            rid    = m_silence.group(1)
+            days   = int(m_silence.group(2)) if m_silence.group(2) else 7
+            expiry = int(time.time() + days * 86400) if days < 9999 else 0
+            silenced_data: dict = {}
+            if SILENCED_RULES.exists():
+                try:
+                    silenced_data = json.loads(SILENCED_RULES.read_text())
+                except Exception:
+                    pass
+            silenced_data[rid] = expiry
+            now_t = time.time()
+            silenced_data = {k: v for k, v in silenced_data.items() if v == 0 or v > now_t}
+            SILENCED_RULES.write_text(json.dumps(silenced_data, indent=2))
+            days_str = "forever" if days >= 9999 else f"for {days} day{'s' if days != 1 else ''}"
+            result = (
+                f"Rule '{rid}' silenced {days_str}.\n"
+                f"  Active silences: {len(silenced_data)}\n"
+                f"  File: {SILENCED_RULES}\n"
+                f"\nTo un-silence: edit the file above, or:\n"
+                f"  /tip silence {rid} 9999   (sets permanent)\n"
+                f"Silences take effect on the next hint cycle (live, no restart needed)."
+            )
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
+        # ── Item 6: /tip helpful / not-helpful — rate the last answer ────────
+        if query.strip().lower() in ("helpful", "not-helpful"):
+            rating = query.strip().lower()
+            ctx_append({
+                "type":   "feedback",
+                "rating": rating,
+                "query":  _last_tip_query[:100],
+                "answer": _last_tip_answer[:200],
+            })
+            if _last_tip_query:
+                result = f"Feedback logged: {rating}\nFor: {_last_tip_query[:80]}"
+            else:
+                result = f"Feedback logged: {rating}\n(No recent /tip query to associate with)"
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
         # Log the question to unified context immediately
         ctx_append({"type": "tip_q", "query": query})
 
@@ -894,6 +1123,10 @@ def handle_tip_query():
         # Log the answer to unified context
         ctx_append({"type": "tip_a", "text": _sanitize_for_ctx(result)})
 
+        # Remember for /tip helpful / not-helpful feedback (items 6)
+        _last_tip_query  = query
+        _last_tip_answer = _sanitize_for_ctx(result, 300)
+
         tmp = TIP_RESULT.with_suffix(".tmp")
         tmp.write_text(result)
         tmp.rename(TIP_RESULT)
@@ -910,11 +1143,13 @@ def handle_tip_query():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_rule_hints(recent_cmds, last_shown):
+    silenced = _load_silenced_rules()
     # Delegate to KB engine if loaded (dispatcher architecture, sub-ms per cmd)
     if _KB_ENGINE and _KB_ENGINE.loaded:
         results = _KB_ENGINE.get_hints(recent_cmds, last_shown, cooldown=RULE_COOLDOWN)
-        # results is list of (rule_id, hint_str, entry) — return (id, hint_str) tuples
-        return [(rid, hint_str) for rid, hint_str, _ in results]
+        # results is list of (rule_id, hint_str, entry) — filter silenced, return (id, hint_str)
+        return [(rid, hint_str) for rid, hint_str, _ in results
+                if rid not in silenced]
 
     # Legacy fallback: flat UPGRADE_RULES scan
     cmd_texts = [c.get("cmd", "") for c in recent_cmds]
@@ -933,6 +1168,8 @@ def get_rule_hints(recent_cmds, last_shown):
         if len(hints) >= 3:
             break
         if now - last_shown.get(pattern, 0) < RULE_COOLDOWN:
+            continue
+        if pattern in silenced:
             continue
         tmpl, example = matches[pattern]
         arg = re.sub(r"^\S+\s*", "", example)[:40]
@@ -956,6 +1193,12 @@ IDLE_TIPS = [
     ("/tip status",              "full diagnostic — backend, model, KB, hints age"),
     ("/tip postmortem",          "show last auto-drafted git commit message"),
     ("/tip test",                "force an ambient hint cycle and verify the pipeline"),
+    ("/tip top-rules",           "10 most-fired rules from your recent command history"),
+    ("/tip history [N]",         "browse your last N /tip Q&A pairs (default: 10)"),
+    ("/tip rule <id>",           "explain any KB rule by ID (hint, detail, pattern)"),
+    ("/tip context",             "show session context injected into prompts"),
+    ("/tip silence <id> [days]", "suppress a noisy rule for N days (default: 7)"),
+    ("/tip helpful",             "rate last /tip answer helpful (logged for analysis)"),
     ("hint prefixes",            "!! danger  !  warn  -> tip  => upgrade"),
     ("kb engine",                "1700+ regex rules across 40 categories — instant match"),
     ("3 hint layers",            "rules (<10ms) + ambient LLM + advisor background"),
@@ -1084,8 +1327,9 @@ def run():
             if _ctx_append_count >= 50:
                 _ctx_compact()
 
-            # Hot-reload config.json if changed
+            # Hot-reload config.json if changed + update pane height
             _load_config()
+            _update_pane_height()
 
             now = time.time()
             if (now - last_hint_check) < HINT_INTERVAL:

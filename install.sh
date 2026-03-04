@@ -1222,9 +1222,17 @@ function /tip() {
         echo ""
 
         printf '\033[36m  Subcommands:\033[0m\n'
-        printf '\033[2m    /tip status     full diagnostic (daemon, config, hints, logs)\033[0m\n'
-        printf '\033[2m    /tip test       force ambient hint generation and show result\033[0m\n'
-        printf '\033[2m    /tip help       this help\033[0m\n'
+        printf '\033[2m    /tip status               full diagnostic (daemon, config, hints, logs)\033[0m\n'
+        printf '\033[2m    /tip test                 force ambient hint generation and show result\033[0m\n'
+        printf '\033[2m    /tip rule <id>            explain a KB rule (hint, detail, pattern)\033[0m\n'
+        printf '\033[2m    /tip top-rules            10 most-fired rules from your command history\033[0m\n'
+        printf '\033[2m    /tip history [N]          last N /tip Q&A pairs (default: 10)\033[0m\n'
+        printf '\033[2m    /tip context              session context injected into last prompt\033[0m\n'
+        printf '\033[2m    /tip silence <id> [days]  suppress a rule for N days (default: 7)\033[0m\n'
+        printf '\033[2m    /tip helpful              rate last answer helpful (logged)\033[0m\n'
+        printf '\033[2m    /tip not-helpful          rate last answer not helpful (logged)\033[0m\n'
+        printf '\033[2m    /tip postmortem           show last auto-drafted git commit message\033[0m\n'
+        printf '\033[2m    /tip help                 this help\033[0m\n'
         echo ""
         printf '\033[36m  Configure models:\033[0m\n'
         printf '\033[2m    Edit %s\033[0m\n' "\$cfg"

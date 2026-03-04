@@ -18,6 +18,14 @@ SB_DIR="${SHELLBUDDY_DIR:-$HOME/.shellbuddy}"
 HINTS_FILE="$SB_DIR/current_hints.txt"
 DAEMON_PID="$SB_DIR/daemon.pid"
 
+# Pane height awareness — read dynamic height set by toggle_hints_pane.sh
+PANE_ROWS=${LINES:-16}
+if [[ -f "$SB_DIR/hints_pane_rows" ]]; then
+    _hr=$(cat "$SB_DIR/hints_pane_rows" 2>/dev/null)
+    [[ "$_hr" =~ ^[0-9]+$ ]] && PANE_ROWS=$_hr
+fi
+_rendered=0
+
 C_RESET='\033[0m'
 
 # Detect color capability — use 256-color palette if supported, else basic ANSI
@@ -71,52 +79,55 @@ LOGO_WIDTH=46
 LOGO_COL=$(( COLS - LOGO_WIDTH - 2 ))
 (( LOGO_COL < 30 )) && LOGO_COL=30
 
-# Print one line with hint on left, logo on right
+# Print one line with hint on left, logo on right (tracks rendered count)
 # $1=hint_text  $2=logo_text  $3=hint_colour  $4=logo_colour
 _print_with_logo() {
     local hint="$1" logo="$2" hcol="$3" lcol="${4:-$C_MAGENTA}"
-    # clamp hint so it never overlaps logo
     local max_hint=$(( LOGO_COL - 4 ))
     (( ${#hint} > max_hint )) && hint="${hint:0:$max_hint}"
-    # pad from end-of-hint to LOGO_COL (accounting for the 2-space indent)
     local pad=$(( LOGO_COL - ${#hint} - 2 ))
     (( pad < 1 )) && pad=1
-    # left-pad logo to LOGO_WIDTH so all lines align at the right edge
     printf "${hcol}  %s${C_RESET}%${pad}s${lcol}%-${LOGO_WIDTH}s${C_RESET}\n" "$hint" "" "$logo"
+    (( _rendered++ ))
+}
+
+# Print one line and track rendered count
+_println() {
+    printf "$@"
+    (( _rendered++ ))
 }
 
 # Process line by line
 while IFS=$'\t' read -r f1 f2 f3 f4 f5; do
+    (( _rendered >= PANE_ROWS )) && break
+
     # Reassemble f3 in case hint itself contains tabs (IDLE_TIP has 2 more fields)
     [[ -n "$f4" ]] && f3="${f3}"$'\t'"${f4}"
     [[ -n "$f5" ]] && f3="${f3}"$'\t'"${f5}"
 
     if [[ "$f1" == HINTS* ]] && [[ -z "$f2" ]]; then
         # Header (no tabs — whole line is in f1)
-        printf "${C_CYAN}  [>_] %s${C_RESET}\n" "$f1"
+        _println "${C_CYAN}  [>_] %s${C_RESET}\n" "$f1"
 
     elif [[ "$f1" == ─* ]] && [[ -z "$f2" ]]; then
         # Separator
-        printf "${C_DIM}  %s${C_RESET}\n" "$f1"
+        _println "${C_DIM}  %s${C_RESET}\n" "$f1"
 
     elif [[ "$f1" == "LOGO" ]]; then
         # LOGO\t<logo>\t<hint_or_special>
-        # f3 may itself be IDLE_TIP\t<cmd>\t<desc> or IDLE_LABEL\t<text>
         _logo="$f2" _hint="$f3"
-        # Detect embedded special markers in hint slot
         if [[ "$_hint" == IDLE_TIP$'\t'* ]]; then
-            # Print logo-only line (no hint), then idle tip below
             _pad=$(( LOGO_COL - 2 ))
-            printf "  %${_pad}s${C_MAGENTA}%-${LOGO_WIDTH}s${C_RESET}\n" "" "$_logo"
+            _println "  %${_pad}s${C_MAGENTA}%-${LOGO_WIDTH}s${C_RESET}\n" "" "$_logo"
             _tip_rest="${_hint#IDLE_TIP$'\t'}"
             _tip_cmd="${_tip_rest%%$'\t'*}"
             _tip_desc="${_tip_rest#*$'\t'}"
-            printf "${C_CYAN}  %-28s${C_RESET}${C_WHITE_DIM}%s${C_RESET}\n" "$_tip_cmd" "$_tip_desc"
+            _println "${C_CYAN}  %-28s${C_RESET}${C_WHITE_DIM}%s${C_RESET}\n" "$_tip_cmd" "$_tip_desc"
         elif [[ "$_hint" == IDLE_LABEL$'\t'* ]]; then
             _pad=$(( LOGO_COL - 2 ))
-            printf "  %${_pad}s${C_MAGENTA}%-${LOGO_WIDTH}s${C_RESET}\n" "" "$_logo"
+            _println "  %${_pad}s${C_MAGENTA}%-${LOGO_WIDTH}s${C_RESET}\n" "" "$_logo"
             _label="${_hint#IDLE_LABEL$'\t'}"
-            printf "${C_BLUE_DIM}%s${C_RESET}\n" "$_label"
+            _println "${C_BLUE_DIM}%s${C_RESET}\n" "$_label"
         elif [[ "$_hint" == \[*x\]* ]]; then
             _print_with_logo "$_hint" "$_logo" "$C_YELLOW_DIM"
         elif [[ "$_hint" == "·" ]]; then
@@ -126,44 +137,40 @@ while IFS=$'\t' read -r f1 f2 f3 f4 f5; do
         else
             _pad=$(( LOGO_COL - 2 ))
             (( _pad < 1 )) && _pad=1
-            printf "  %${_pad}s${C_MAGENTA}%-${LOGO_WIDTH}s${C_RESET}\n" "" "$_logo"
+            _println "  %${_pad}s${C_MAGENTA}%-${LOGO_WIDTH}s${C_RESET}\n" "" "$_logo"
         fi
 
     elif [[ "$f1" == "LOGO_TAG" ]]; then
-        # LOGO_TAG\t<tag>\t<hint>
         _tag="$f2" _hint="$f3"
         if [[ -n "$_hint" ]]; then
             _print_with_logo "$_hint" "$_tag" "$C_GREEN_DIM" "$C_MAGENTA_BOLD"
         else
             _pad=$(( LOGO_COL - 2 ))
             (( _pad < 1 )) && _pad=1
-            printf "  %${_pad}s${C_MAGENTA_BOLD}%-${LOGO_WIDTH}s${C_RESET}\n" "" "$_tag"
+            _println "  %${_pad}s${C_MAGENTA_BOLD}%-${LOGO_WIDTH}s${C_RESET}\n" "" "$_tag"
         fi
 
     elif [[ "$f1" == "IDLE_TIP" ]]; then
-        # IDLE_TIP\t<cmd>\t<desc>  (standalone, no logo on this line)
-        printf "${C_CYAN}  %-28s${C_RESET}${C_WHITE_DIM}%s${C_RESET}\n" "$f2" "$f3"
+        _println "${C_CYAN}  %-28s${C_RESET}${C_WHITE_DIM}%s${C_RESET}\n" "$f2" "$f3"
 
     elif [[ "$f1" == "IDLE_LABEL" ]]; then
-        # IDLE_LABEL\t<text>
-        printf "${C_BLUE_DIM}%s${C_RESET}\n" "$f2"
+        _println "${C_BLUE_DIM}%s${C_RESET}\n" "$f2"
 
     elif [[ "$f1" == \[*x\]* ]] && [[ -z "$f2" ]]; then
-        # Rule hint — muted amber, dim body
-        printf "${C_YELLOW_DIM}  %s${C_RESET}\n" "$f1"
+        _println "${C_YELLOW_DIM}  %s${C_RESET}\n" "$f1"
 
     elif [[ "$f1" == "·" ]] && [[ -z "$f2" ]]; then
-        printf "${C_DIM}  ·${C_RESET}\n"
+        _println "${C_DIM}  ·${C_RESET}\n"
 
     elif [[ "$f1" == thinking* ]] && [[ -z "$f2" ]]; then
-        printf "${C_CYAN_DIM}  %s${C_RESET}\n" "$f1"
+        _println "${C_CYAN_DIM}  %s${C_RESET}\n" "$f1"
 
     elif [[ -n "$f1" ]] && [[ -z "$f2" ]]; then
         # Plain AI hint — muted sage green, dim
-        printf "${C_GREEN_DIM}  %s${C_RESET}\n" "$f1"
+        _println "${C_GREEN_DIM}  %s${C_RESET}\n" "$f1"
 
     else
-        echo ""
+        _println "\n"
     fi
 
 done < "$HINTS_FILE"
