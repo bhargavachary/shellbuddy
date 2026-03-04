@@ -1240,6 +1240,9 @@ function /tip() {
         printf '\033[2m    /tip explain [N]          explain last N commands + flag issues (default: 5)\033[0m\n'
         printf '\033[2m    /tip note <text>          save a reminder (injected into future prompts)\033[0m\n'
         printf '\033[2m    /tip forget [N|all]       trim N oldest / wipe all session context\033[0m\n'
+        printf '\033[2m    /tip what <cmd>           explain any command: syntax, flags, examples\033[0m\n'
+        printf '\033[2m    /tip recent [N]           command frequency report (default: last 100)\033[0m\n'
+        printf '\033[2m    /tip ask-all [question]   query all active backends, compare answers\033[0m\n'
         printf '\033[2m    /tip postmortem           show last auto-drafted git commit message\033[0m\n'
         printf '\033[2m    /tip help                 this help\033[0m\n'
         echo ""

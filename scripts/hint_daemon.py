@@ -849,6 +849,20 @@ def build_post_mortem_prompt(recent_cmds, cwd, ctx_block):
     cmd_summary = "\n".join(
         f"  {c.get('ts','')[-8:]}  {c.get('cmd','')}" for c in recent_cmds
     )
+
+    # Item 28 enhancement: inject git diff stat for context
+    git_diff_summary = ""
+    try:
+        r = subprocess.run(
+            ["git", "-C", cwd, "diff", "--stat", "HEAD~1", "HEAD"],
+            capture_output=True, text=True, timeout=5
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            lines = r.stdout.strip().splitlines()
+            git_diff_summary = "\n".join(lines[:15])  # cap at 15 lines
+    except Exception:
+        pass
+
     prompt = (
         "You are a senior engineer writing a git commit message.\n"
         "Analyze the shell session below and draft the best possible commit message.\n\n"
@@ -856,6 +870,8 @@ def build_post_mortem_prompt(recent_cmds, cwd, ctx_block):
     )
     if ctx_block:
         prompt += f"\nSession context (hints, /tip answers, advisor observations):\n{ctx_block}\n"
+    if git_diff_summary:
+        prompt += f"\nGit diff stat (files changed in last commit):\n{git_diff_summary}\n"
     prompt += (
         f"\nCommands run in this session (oldest→newest):\n{cmd_summary}\n\n"
         "Output format — exactly 2 parts, plain text:\n"
@@ -1460,6 +1476,114 @@ def handle_tip_query():
             tmp.rename(TIP_RESULT)
             return True
 
+        # ── Item 24: /tip what <cmd> — explain a command ─────────────────────────
+        m_what = re.match(r'^what\s+(\S.*?)$', query.strip(), re.IGNORECASE)
+        if m_what:
+            cmd_target = m_what.group(1).strip()
+            if TIP_BACKEND not in _AVAILABLE_BACKENDS:
+                result = f"[{TIP_BACKEND} not available — check config.json]"
+            else:
+                what_prompt = (
+                    f"Explain the `{cmd_target}` shell command.\n\n"
+                    "Format:\n"
+                    "  What: <one-sentence description>\n"
+                    "  Syntax: <usage/synopsis>\n"
+                    "  Key flags: <3-5 most useful flags with a short description each>\n"
+                    "  Example: <1-2 practical examples>\n"
+                    "  Tip: <one gotcha or pro-tip>\n\n"
+                    "Max 12 lines. Plain text only. No markdown. No preamble."
+                )
+                result = call_ai_tip(what_prompt) or f"[{TIP_BACKEND} returned empty]"
+                ctx_append({"type": "tip_q", "query": f"what {cmd_target}"})
+                ctx_append({"type": "tip_a", "text": _sanitize_for_ctx(result)})
+                _last_tip_query  = query
+                _last_tip_answer = _sanitize_for_ctx(result, 300)
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
+        # ── Item 25: /tip recent [N] — command frequency analysis ─────────────
+        m_recent = re.match(r'^recent(?:\s+(\d+))?$', query.strip(), re.IGNORECASE)
+        if m_recent:
+            n = int(m_recent.group(1)) if m_recent.group(1) else 100
+            if not CMD_LOG.exists():
+                result = "No command log yet — run some commands first."
+            else:
+                try:
+                    lines = CMD_LOG.read_text().strip().splitlines()[-n:]
+                    entries = _parse_jsonl_lines(lines)
+                    if not entries:
+                        result = "No commands logged yet."
+                    else:
+                        freq: Counter = Counter()
+                        first_token_freq: Counter = Counter()
+                        last_ts = ""
+                        for e in entries:
+                            cmd = e.get("cmd", "").strip()
+                            if cmd:
+                                freq[cmd] += 1
+                                tok = cmd.split()[0] if cmd.split() else cmd
+                                first_token_freq[tok] += 1
+                                last_ts = e.get("ts", last_ts)
+                        lines_out = [
+                            f"/tip recent  (last {len(entries)} commands, "
+                            f"last: {last_ts[:19].replace('T',' ') if last_ts else 'n/a'})", "",
+                            f"  Top commands ({min(15, len(freq))} of {len(freq)} unique):", "",
+                        ]
+                        for cmd_str, cnt in freq.most_common(15):
+                            lines_out.append(f"  {cnt:>4}x   {cmd_str[:65]}")
+                        lines_out += ["", f"  Top programs ({min(10, len(first_token_freq))} of {len(first_token_freq)} unique):", ""]
+                        for tok, cnt in first_token_freq.most_common(10):
+                            lines_out.append(f"  {cnt:>4}x   {tok}")
+                        result = "\n".join(lines_out)
+                except Exception as e2:
+                    result = f"[recent error: {e2}]"
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
+        # ── Item 27: /tip ask-all [question] — query all active backends ──────
+        if query.strip().lower().startswith("ask-all"):
+            ask_q = query.strip()[7:].strip() or _last_tip_query
+            if not ask_q:
+                result = "Usage: /tip ask-all <question>  (or run a /tip query first)"
+            elif not _AVAILABLE_BACKENDS:
+                result = "No backends available — check config.json and API keys."
+            else:
+                ask_prompt = build_tip_prompt(ask_q)
+                futures: dict = {}
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                    for be in sorted(_AVAILABLE_BACKENDS):
+                        if be == "copilot":
+                            model = TIP_MODEL
+                        elif be == "claude":
+                            model = CLAUDE_MODEL
+                        elif be == "ollama":
+                            model = OLLAMA_URL.split("/")[-1] or "llama3"
+                        else:
+                            model = OPENAI_MODEL
+                        futures[be] = pool.submit(_call_backend, be, ask_prompt, model=model)
+                lines_out = [
+                    f"/tip ask-all: '{ask_q[:60]}{'...' if len(ask_q)>60 else ''}'"
+                    f"  ({len(futures)} backends)", ""
+                ]
+                for be in sorted(futures):
+                    try:
+                        answer = futures[be].result(timeout=60) or "(no response)"
+                    except Exception as exc:
+                        answer = f"(error: {exc})"
+                    lines_out.append(f"── {be} ──────────────────────────────")
+                    for aline in answer.splitlines()[:8]:
+                        lines_out.append(f"  {aline.strip()[:70]}")
+                    lines_out.append("")
+                result = "\n".join(lines_out).rstrip()
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
         # Log the question to unified context immediately
         ctx_append({"type": "tip_q", "query": query})
 
@@ -1575,6 +1699,9 @@ IDLE_TIPS = [
     ("/tip explain [N]",         "explain your last N commands + call out any issues"),
     ("/tip note <text>",         "save a reminder; injected into future /tip prompts"),
     ("/tip forget [N|all]",      "trim N oldest / clear all session context entries"),
+    ("/tip what <cmd>",          "explain any command: syntax, flags, examples, tips"),
+    ("/tip recent [N]",          "command frequency report — top commands + programs"),
+    ("/tip ask-all [question]",  "query all active backends in parallel, compare answers"),
     ("hint prefixes",            "!! danger  !  warn  -> tip  => upgrade"),
     ("kb engine",                "1700+ regex rules across 40 categories — instant match"),
     ("3 hint layers",            "rules (<10ms) + ambient LLM + advisor background"),
@@ -1718,6 +1845,24 @@ def run():
         print(f"  post-mortem: DISABLED (enable_post_mortem=false in config)", flush=True)
     if not ENABLE_IDLE_TIPS:
         print(f"  idle tips: DISABLED (enable_idle_tips=false in config)", flush=True)
+
+    # ── Item 26: Session resume summary ───────────────────────────────────────
+    try:
+        if CMD_LOG.exists():
+            cmd_lines = CMD_LOG.read_text().strip().splitlines()
+            total_cmds = len(cmd_lines)
+            last_entry = _parse_jsonl_lines(cmd_lines[-1:])
+            last_ts = last_entry[0].get("ts", "") if last_entry else ""
+        else:
+            total_cmds, last_ts = 0, ""
+        hints_batches = 0
+        if HINTS_LOG.exists():
+            hints_batches = len(HINTS_LOG.read_text().strip().splitlines())
+        print(f"  session history: {total_cmds} commands logged, {hints_batches} hint batches shown", flush=True)
+        if last_ts:
+            print(f"  last activity: {last_ts[:19].replace('T', ' ')}", flush=True)
+    except Exception:
+        pass  # best-effort startup summary
 
     try:
         while True:
