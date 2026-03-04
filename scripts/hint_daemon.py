@@ -41,6 +41,7 @@ UNIFIED_CTX      = DATA_DIR / "unified_context.jsonl"  # single truth: rules+amb
 SILENCED_RULES   = DATA_DIR / "silenced_rules.json"    # rules suppressed via /tip silence
 HINTS_LOG        = DATA_DIR / "hints_log.jsonl"         # item 13: history of displayed hints
 RULE_STATS       = DATA_DIR / "rule_stats.json"         # item 14: rule display frequency
+DAEMON_LOG       = DATA_DIR / "daemon.log"              # item 29: latency stats source
 
 # Defaults (overridden by config.json)
 HINT_BACKEND    = "copilot"
@@ -240,6 +241,36 @@ def _mark_rule_feedback(rating: str) -> None:
         tmp.rename(RULE_STATS)
     except Exception:
         pass
+
+
+# ── Item 32: git branch for advisor context ───────────────────────────────────
+_git_branch_cache: dict = {}   # {cwd: (branch_str, ts)}
+_GIT_BRANCH_TTL = 30.0
+
+def _get_git_branch(cwd: str) -> str:
+    """Return 'branch[*]' string for cwd, or '' if not a git repo. Cached 30s."""
+    now = time.time()
+    if cwd in _git_branch_cache:
+        val, ts = _git_branch_cache[cwd]
+        if now - ts < _GIT_BRANCH_TTL:
+            return val
+    try:
+        br = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=2
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "-C", cwd, "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True, text=True, timeout=2
+        ).stdout.strip()
+        if not br or br == "HEAD":
+            result = ""
+        else:
+            result = br + ("*" if dirty else "")
+    except Exception:
+        result = ""
+    _git_branch_cache[cwd] = (result, now)
+    return result
 
 
 # ── KB hot-reload ─────────────────────────────────────────────────────────────
@@ -971,8 +1002,15 @@ def build_hint_prompt(recent_cmds, cwd):
         f"Directory: {cwd}\n"
         f"Project: {project_ctx}\n"
     )
+    # Item 32: append git branch to advisor context
+    git_br = _get_git_branch(cwd)
+    if git_br:
+        prompt += f"Git branch: {git_br}\n"
     if intent:
         prompt += f"Current activity: {intent}\n"
+    # Show which rule IDs are already visible so LLM doesn't re-suggest them
+    if _last_shown_rule_ids:
+        prompt += f"Rule hints already shown: {', '.join(_last_shown_rule_ids)}\n"
     if ctx_block:
         prompt += f"\nSession history (commands, prior hints, /tip answers):\n{ctx_block}\n"
     prompt += (
@@ -1584,6 +1622,127 @@ def handle_tip_query():
             tmp.rename(TIP_RESULT)
             return True
 
+        # ── Item 29: /tip perf — backend latency statistics ────────────────────
+        if query.strip().lower() == "perf":
+            if not DAEMON_LOG.exists():
+                result = f"No daemon log at {DAEMON_LOG}."
+            else:
+                try:
+                    log_lines = DAEMON_LOG.read_text().splitlines()[-2000:]
+                    # Parse "  backend: copilot/gpt-4.1 312ms" style lines
+                    latencies: dict = {}   # be_model -> [ms, ...]
+                    be_re = re.compile(r'backend:\s+(\S+)\s+(\d+)ms')
+                    for line in log_lines:
+                        m2 = be_re.search(line)
+                        if m2:
+                            key = m2.group(1)
+                            ms  = int(m2.group(2))
+                            latencies.setdefault(key, []).append(ms)
+                    if not latencies:
+                        result = "No backend latency data yet — run some /tip queries."
+                    else:
+                        lines_out = [
+                            f"Backend latency stats  (last {len(log_lines)} log lines analyzed)", ""
+                        ]
+                        lines_out.append(
+                            f"  {'Backend/Model':<35} {'calls':>6}  {'avg':>6}  {'min':>6}  {'max':>6}"
+                        )
+                        lines_out.append("  " + "─" * 65)
+                        for key, ms_list in sorted(latencies.items(),
+                                                    key=lambda kv: -len(kv[1])):
+                            avg = sum(ms_list) // len(ms_list)
+                            lines_out.append(
+                                f"  {key:<35} {len(ms_list):>6}  {avg:>5}ms  "
+                                f"{min(ms_list):>5}ms  {max(ms_list):>5}ms"
+                            )
+                        result = "\n".join(lines_out)
+                except Exception as e2:
+                    result = f"[perf error: {e2}]"
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
+        # ── Item 30: /tip export [pattern] — export KB rules ──────────────────
+        m_export = re.match(r'^export(?:\s+(.+))?$', query.strip(), re.IGNORECASE)
+        if m_export:
+            pattern = (m_export.group(1) or "").strip().lower()
+            if not (_KB_ENGINE and _KB_ENGINE.loaded):
+                result = "KB engine not loaded — run: python3 kb_builder.py"
+            else:
+                try:
+                    hits = []
+                    all_rule_lists = list(_KB_ENGINE._buckets.values()) + [_KB_ENGINE._generic]
+                    for rule_list in all_rule_lists:
+                        for _, entry in rule_list:
+                            if not pattern:
+                                hits.append(entry)
+                            elif (pattern in entry.get("hint", "").lower()
+                                    or pattern in entry.get("id", "").lower()
+                                    or pattern in entry.get("cmd", "").lower()
+                                    or pattern in " ".join(entry.get("tags", [])).lower()):
+                                hits.append(entry)
+                    out_path = DATA_DIR / "exported_rules.json"
+                    out_path.write_text(json.dumps(hits, indent=2))
+                    result = (
+                        f"Exported {len(hits)} rule{'s' if len(hits) != 1 else ''} "
+                        f"{'matching ' + repr(pattern) + ' ' if pattern else ''}to:\n"
+                        f"  {out_path}\n\n"
+                        f"Edit and reload with:\n"
+                        f"  cp {out_path} ~/.shellbuddy/kb.json\n"
+                        f"  (daemon auto-reloads on next cycle — no restart needed)"
+                    )
+                except Exception as e2:
+                    result = f"[export error: {e2}]"
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
+        # ── Item 31: /tip config [key [value]] — view / set config.json ───────
+        m_cfg = re.match(r'^config(?:\s+(\S+)(?:\s+(.+))?)?$', query.strip(), re.IGNORECASE)
+        if m_cfg:
+            cfg_key = m_cfg.group(1)
+            cfg_val = m_cfg.group(2)
+            try:
+                current_cfg: dict = {}
+                if CONFIG_FILE.exists():
+                    current_cfg = json.loads(CONFIG_FILE.read_text())
+                if cfg_key is None:
+                    # Show all config
+                    if not current_cfg:
+                        result = f"Config file empty or not found: {CONFIG_FILE}"
+                    else:
+                        lines_out = [f"Config: {CONFIG_FILE}", ""]
+                        for k, v in sorted(current_cfg.items()):
+                            lines_out.append(f"  {k:<35} = {json.dumps(v)}")
+                        result = "\n".join(lines_out)
+                elif cfg_val is None:
+                    # Show specific key
+                    if cfg_key in current_cfg:
+                        result = f"{cfg_key} = {json.dumps(current_cfg[cfg_key])}"
+                    else:
+                        result = f"Key '{cfg_key}' not set in {CONFIG_FILE}."
+                else:
+                    # Set key (try to parse value as JSON, fall back to string)
+                    try:
+                        parsed = json.loads(cfg_val)
+                    except Exception:
+                        parsed = cfg_val
+                    current_cfg[cfg_key] = parsed
+                    CONFIG_FILE.write_text(json.dumps(current_cfg, indent=2))
+                    result = (
+                        f"Set {cfg_key} = {json.dumps(parsed)}\n"
+                        f"Config saved to {CONFIG_FILE}\n"
+                        f"Hot-reloads on next hint cycle — no restart needed."
+                    )
+            except Exception as e2:
+                result = f"[config error: {e2}]"
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
         # Log the question to unified context immediately
         ctx_append({"type": "tip_q", "query": query})
 
@@ -1702,6 +1861,9 @@ IDLE_TIPS = [
     ("/tip what <cmd>",          "explain any command: syntax, flags, examples, tips"),
     ("/tip recent [N]",          "command frequency report — top commands + programs"),
     ("/tip ask-all [question]",  "query all active backends in parallel, compare answers"),
+    ("/tip perf",                "backend latency stats — avg/min/max per model"),
+    ("/tip export [pattern]",    "dump matching KB rules to exported_rules.json"),
+    ("/tip config [key [val]]",  "view or set config.json keys (hot-reload — no restart)"),
     ("hint prefixes",            "!! danger  !  warn  -> tip  => upgrade"),
     ("kb engine",                "1700+ regex rules across 40 categories — instant match"),
     ("3 hint layers",            "rules (<10ms) + ambient LLM + advisor background"),

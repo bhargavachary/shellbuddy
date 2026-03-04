@@ -1243,6 +1243,9 @@ function /tip() {
         printf '\033[2m    /tip what <cmd>           explain any command: syntax, flags, examples\033[0m\n'
         printf '\033[2m    /tip recent [N]           command frequency report (default: last 100)\033[0m\n'
         printf '\033[2m    /tip ask-all [question]   query all active backends, compare answers\033[0m\n'
+        printf '\033[2m    /tip perf                 backend latency stats from daemon.log\033[0m\n'
+        printf '\033[2m    /tip export [pattern]     dump matching KB rules to exported_rules.json\033[0m\n'
+        printf '\033[2m    /tip config [key [val]]   view or set config.json keys (hot-reload)\033[0m\n'
         printf '\033[2m    /tip postmortem           show last auto-drafted git commit message\033[0m\n'
         printf '\033[2m    /tip help                 this help\033[0m\n'
         echo ""

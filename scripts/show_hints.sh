@@ -97,6 +97,36 @@ _println() {
     (( _rendered++ ))
 }
 
+# Item 33: Word-wrapped println for long AI hint lines (>COLS-6 chars)
+# Splits at char boundary, shows continuation on next line with indent.
+_println_wrap() {
+    local col="$1" text="$2"
+    local max_w=$(( COLS - 6 ))
+    (( max_w < 20 )) && max_w=20
+    if (( ${#text} <= max_w )); then
+        printf "${col}  %s${C_RESET}\n" "$text"
+        (( _rendered++ ))
+    else
+        # Find last space before max_w for a clean break
+        local chunk="${text:0:$max_w}"
+        local break_at=$(( max_w ))
+        # Walk back to find space
+        while (( break_at > max_w / 2 )); do
+            [[ "${text:$break_at:1}" == " " ]] && break
+            (( break_at-- ))
+        done
+        (( break_at <= max_w / 2 )) && break_at=$max_w
+        printf "${col}  %s${C_RESET}\n" "${text:0:$break_at}"
+        (( _rendered++ ))
+        local rest="${text:$break_at}"
+        rest="${rest# }"   # strip leading space
+        if (( _rendered < PANE_ROWS && ${#rest} > 0 )); then
+            printf "${C_DIM}      …%s${C_RESET}\n" "$rest"
+            (( _rendered++ ))
+        fi
+    fi
+}
+
 # Process line by line
 while IFS=$'\t' read -r f1 f2 f3 f4 f5; do
     (( _rendered >= PANE_ROWS )) && break
@@ -166,8 +196,8 @@ while IFS=$'\t' read -r f1 f2 f3 f4 f5; do
         _println "${C_CYAN_DIM}  %s${C_RESET}\n" "$f1"
 
     elif [[ -n "$f1" ]] && [[ -z "$f2" ]]; then
-        # Plain AI hint — muted sage green, dim
-        _println "${C_GREEN_DIM}  %s${C_RESET}\n" "$f1"
+        # Plain AI hint — item 33: word-wrapped for long lines
+        _println_wrap "${C_GREEN_DIM}" "$f1"
 
     else
         _println "\n"
