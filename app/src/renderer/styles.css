@@ -1,0 +1,434 @@
+/* ShellBuddy — Theme
+ * Catppuccin Mocha-inspired palette matching the existing hint colors.
+ */
+
+:root {
+  --bg-base: #1e1e2e;
+  --bg-surface: #181825;
+  --bg-overlay: #242438;
+  --bg-highlight: #313244;
+  --fg-text: #cdd6f4;
+  --fg-dim: #6c7086;
+  --fg-subtext: #a6adc8;
+
+  /* Accent colors (matching show_hints.sh palette) */
+  --cyan: #89dceb;
+  --cyan-dim: #5ba8b8;
+  --green: #89b4fa;       /* periwinkle — AI ambient hints */
+  --yellow: #fab387;      /* light peach — rule hints */
+  --magenta: #cba6f7;     /* soft lilac — logo */
+  --magenta-bold: #d0bfff; /* light lavender */
+  --blue-dim: #74a8d0;    /* steel blue */
+  --red: #f38ba8;
+  --white-dim: #bac2de;
+
+  --border: #313244;
+  --resize-handle: #45475a;
+
+  --font-mono: 'SF Mono', 'JetBrains Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+  --font-size: 13px;
+
+  /* Layout */
+  --stats-height: 28px;
+  --hints-height: 160px;
+  --titlebar-inset: 78px; /* space for traffic lights */
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg-base);
+  color: var(--fg-text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size);
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+
+.hidden { display: none !important; }
+
+/* ── Stats Bar ──────────────────────────────────────────────────────────── */
+.stats-bar {
+  height: var(--stats-height);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 12px 0 var(--titlebar-inset);
+  gap: 16px;
+  font-size: 11px;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.stat-cell {
+  color: var(--fg-dim);
+  -webkit-app-region: no-drag;
+  white-space: nowrap;
+}
+
+.stat-cell .bar {
+  color: var(--cyan);
+}
+
+.stat-cell .value {
+  color: var(--fg-subtext);
+  font-weight: 600;
+}
+
+.stat-cell .trend-up { color: var(--red); }
+.stat-cell .trend-down { color: var(--green); }
+.stat-cell .trend-flat { color: var(--fg-dim); }
+
+.git-state {
+  margin-left: auto;
+  color: var(--cyan-dim);
+}
+
+.git-state.dirty { color: var(--yellow); }
+
+/* ── Hints Panel ────────────────────────────────────────────────────────── */
+.hints-panel {
+  height: var(--hints-height);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.resize-handle {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  cursor: ns-resize;
+  background: transparent;
+  z-index: 10;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+  background: var(--resize-handle);
+}
+
+.hints-content {
+  padding: 8px 16px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.hint-placeholder {
+  color: var(--fg-dim);
+  font-style: italic;
+}
+
+/* Hint line types */
+.hint-line { margin: 1px 0; }
+
+.hint-header {
+  color: var(--cyan);
+  font-weight: bold;
+}
+
+.hint-separator {
+  color: var(--fg-dim);
+  opacity: 0.5;
+}
+
+.hint-rule {
+  color: var(--yellow);
+}
+
+.hint-ai {
+  color: var(--green);
+}
+
+.hint-thinking {
+  color: var(--cyan-dim);
+  font-style: italic;
+}
+
+.hint-divider {
+  color: var(--fg-dim);
+  text-align: center;
+}
+
+.hint-idle-label {
+  color: var(--blue-dim);
+}
+
+.hint-idle-tip {
+  display: flex;
+  gap: 12px;
+}
+
+.hint-idle-tip .cmd {
+  color: var(--cyan);
+  min-width: 200px;
+}
+
+.hint-idle-tip .desc {
+  color: var(--white-dim);
+}
+
+.hint-logo {
+  color: var(--magenta);
+  float: right;
+  text-align: right;
+  opacity: 0.7;
+}
+
+/* ── Terminal ───────────────────────────────────────────────────────────── */
+.terminal-container {
+  flex: 1;
+  background: var(--bg-base);
+  overflow: hidden;
+}
+
+/* xterm.js overrides */
+.terminal-container .xterm {
+  height: 100%;
+  padding: 4px 8px;
+}
+
+.terminal-container .xterm-viewport {
+  overflow-y: auto !important;
+}
+
+/* ── App Layout ─────────────────────────────────────────────────────────── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ── Setup Wizard ───────────────────────────────────────────────────────── */
+#setup-wizard {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-base);
+}
+
+.wizard-container {
+  max-width: 520px;
+  width: 90%;
+}
+
+.wizard-logo {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.logo-art {
+  color: var(--magenta);
+  font-size: 14px;
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+
+.wizard-logo h1 {
+  color: var(--fg-text);
+  font-size: 22px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.subtitle {
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+.wizard-step {
+  margin-bottom: 24px;
+}
+
+.wizard-step h2 {
+  color: var(--fg-text);
+  font-size: 15px;
+  margin-bottom: 6px;
+}
+
+.step-desc {
+  color: var(--fg-dim);
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.backend-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.backend-option {
+  cursor: pointer;
+}
+
+.backend-option input[type="radio"] {
+  display: none;
+}
+
+.option-card {
+  display: block;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-overlay);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.option-card strong {
+  display: block;
+  color: var(--fg-text);
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+
+.option-card span {
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.backend-option input:checked + .option-card {
+  border-color: var(--cyan);
+  background: var(--bg-highlight);
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-subtext);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  accent-color: var(--cyan);
+  width: 16px;
+  height: 16px;
+}
+
+code {
+  background: var(--bg-highlight);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: var(--yellow);
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+.btn-primary {
+  display: block;
+  width: 100%;
+  padding: 10px 20px;
+  background: var(--cyan);
+  color: var(--bg-base);
+  border: none;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 16px;
+  transition: opacity 0.15s;
+}
+
+.btn-primary:hover { opacity: 0.85; }
+.btn-primary:active { opacity: 0.7; }
+
+.btn-secondary {
+  padding: 8px 16px;
+  background: var(--bg-highlight);
+  color: var(--fg-text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-icon {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.btn-icon:hover { color: var(--fg-text); }
+
+/* ── Settings Panel ─────────────────────────────────────────────────────── */
+#settings-panel {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.settings-container {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 480px;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.settings-header h2 {
+  font-size: 16px;
+  color: var(--fg-text);
+}
+
+#settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#settings-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+#settings-form input,
+#settings-form select {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.settings-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}

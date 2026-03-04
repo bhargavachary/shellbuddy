@@ -20,6 +20,16 @@ unified_context.jsonl
 # KB builder intermediate output (resumable partials, not needed in repo)
 .kb_partial/
 
+# Electron app
+app/node_modules/
+app/out/
+app/python/
+app/.webpack/
+*.dmg
+
+# Python venv
+.venv/
+
 # Editor
 *.swp
 *.swo

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>ShellBuddy</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Setup Wizard (shown on first run) -->
+  <div id="setup-wizard" class="panel hidden">
+    <div class="wizard-container">
+      <div class="wizard-logo">
+        <pre class="logo-art">
+   ╭──────────────────────╮
+   │  [>_] shell buddy    │
+   ╰──────────────────────╯
+        </pre>
+        <h1>Welcome to ShellBuddy</h1>
+        <p class="subtitle">AI-powered ambient shell hints</p>
+      </div>
+
+      <div class="wizard-step" id="step-backend">
+        <h2>Choose an AI Backend</h2>
+        <p class="step-desc">ShellBuddy uses AI to generate contextual hints. Pick a backend:</p>
+        <div class="backend-options">
+          <label class="backend-option">
+            <input type="radio" name="backend" value="copilot">
+            <span class="option-card">
+              <strong>GitHub Copilot</strong>
+              <span>Uses your VS Code Copilot subscription. No extra cost.</span>
+            </span>
+          </label>
+          <label class="backend-option">
+            <input type="radio" name="backend" value="ollama" checked>
+            <span class="option-card">
+              <strong>Ollama (Local)</strong>
+              <span>Free, private, runs on your Mac. Requires Ollama installed.</span>
+            </span>
+          </label>
+          <label class="backend-option">
+            <input type="radio" name="backend" value="claude">
+            <span class="option-card">
+              <strong>Claude (Anthropic)</strong>
+              <span>Requires ANTHROPIC_API_KEY environment variable.</span>
+            </span>
+          </label>
+          <label class="backend-option">
+            <input type="radio" name="backend" value="none">
+            <span class="option-card">
+              <strong>No AI (Rules Only)</strong>
+              <span>Just regex-based KB hints. No network calls.</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div class="wizard-step" id="step-shell">
+        <h2>Shell Integration</h2>
+        <p class="step-desc">To log commands from your other terminals (iTerm2, Terminal.app), ShellBuddy
+          needs to add a small block to your <code>~/.zshrc</code>.</p>
+        <label class="checkbox-label">
+          <input type="checkbox" id="patch-zshrc" checked>
+          <span>Patch ~/.zshrc for command logging</span>
+        </label>
+      </div>
+
+      <button id="wizard-finish" class="btn-primary">Start ShellBuddy</button>
+    </div>
+  </div>
+
+  <!-- Settings Panel (overlay) -->
+  <div id="settings-panel" class="panel hidden">
+    <div class="settings-container">
+      <div class="settings-header">
+        <h2>Settings</h2>
+        <button id="settings-close" class="btn-icon">&times;</button>
+      </div>
+      <div id="settings-form"></div>
+      <div class="settings-footer">
+        <button id="settings-save" class="btn-primary">Save</button>
+        <button id="settings-cancel" class="btn-secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main App Layout -->
+  <div id="app" class="hidden">
+    <!-- Stats Bar -->
+    <div id="stats-bar" class="stats-bar">
+      <span id="stat-cpu" class="stat-cell">CPU ░░░░░░ --% </span>
+      <span id="stat-ram" class="stat-cell">RAM ░░░░░░ --% </span>
+      <span id="stat-gpu" class="stat-cell">GPU ░░░░░░ --% </span>
+      <span id="stat-git" class="stat-cell git-state"></span>
+    </div>
+
+    <!-- Hints Panel (resizable) -->
+    <div id="hints-panel" class="hints-panel">
+      <div id="hints-resize" class="resize-handle"></div>
+      <div id="hints-content" class="hints-content">
+        <span class="hint-placeholder">Waiting for hints... run a few commands</span>
+      </div>
+    </div>
+
+    <!-- Terminal -->
+    <div id="terminal-container" class="terminal-container"></div>
+  </div>
+
+  <script src="terminal.js"></script>
+  <script src="hints.js"></script>
+  <script src="stats.js"></script>
+  <script src="settings.js"></script>
+  <script src="setup-wizard.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
