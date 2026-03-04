@@ -193,6 +193,55 @@ def _update_rule_stats(rule_ids: list) -> None:
         pass  # stats are best-effort
 
 
+# ── Item 19: Adaptive cooldown ───────────────────────────────────────────────
+_last_shown_rule_ids: list = []   # rule IDs shown in last cycle (feedback linkage)
+
+def _adaptive_suppress(rid: str) -> bool:
+    """Return True if this rule should be back-off suppressed.
+
+    Rules shown ≥ 15 times with zero positive feedback are suppressed for an
+    extra 2× RULE_COOLDOWN window — prevents spamming hints the user ignores.
+    Rules with ≥1 helpful vote always pass through normally.
+    """
+    if not RULE_STATS.exists():
+        return False
+    try:
+        data = RULE_STATS.read_text()
+        stats = json.loads(data)
+        s = stats.get(rid, {})
+        if s.get("shown", 0) < 15:
+            return False
+        if s.get("helpful", 0) > 0:
+            return False
+        age = time.time() - s.get("last_shown", 0)
+        return age < RULE_COOLDOWN * 2
+    except Exception:
+        return False
+
+
+def _mark_rule_feedback(rating: str) -> None:
+    """Link /tip helpful / not-helpful feedback to last-shown rule IDs."""
+    if not _last_shown_rule_ids:
+        return
+    try:
+        stats: dict = {}
+        if RULE_STATS.exists():
+            try:
+                stats = json.loads(RULE_STATS.read_text())
+            except Exception:
+                pass
+        key = "helpful" if rating == "helpful" else "not_helpful"
+        for rid in _last_shown_rule_ids:
+            entry = stats.setdefault(rid, {"shown": 0, "last_shown": 0.0,
+                                           "helpful": 0, "not_helpful": 0})
+            entry[key] = entry.get(key, 0) + 1
+        tmp = RULE_STATS.with_suffix(".tmp")
+        tmp.write_text(json.dumps(stats, indent=2))
+        tmp.rename(RULE_STATS)
+    except Exception:
+        pass
+
+
 # ── KB hot-reload ─────────────────────────────────────────────────────────────
 _kb_mtime = 0.0
 
@@ -1178,6 +1227,7 @@ def handle_tip_query():
                 "query":  _last_tip_query[:100],
                 "answer": _last_tip_answer[:200],
             })
+            _mark_rule_feedback(rating)   # item 19: link to last-shown rule IDs
             if _last_tip_query:
                 result = f"Feedback logged: {rating}\nFor: {_last_tip_query[:80]}"
             else:
@@ -1294,6 +1344,122 @@ def handle_tip_query():
             tmp.rename(TIP_RESULT)
             return True
 
+        # ── Item 20: /tip compare <A> vs <B> — structured LLM comparison ────────
+        m_cmp = re.match(r'^compare\s+(.+?)\s+vs\s+(.+)$', query.strip(), re.IGNORECASE)
+        if m_cmp:
+            opt_a = m_cmp.group(1).strip()
+            opt_b = m_cmp.group(2).strip()
+            if TIP_BACKEND not in _AVAILABLE_BACKENDS:
+                result = f"[{TIP_BACKEND} not available — check config.json]"
+            else:
+                cmp_prompt = (
+                    "You are a senior shell/CLI expert. Compare these two approaches:\n\n"
+                    f"  A: {opt_a}\n"
+                    f"  B: {opt_b}\n\n"
+                    "Format:\n"
+                    "  A: <one-line summary>\n"
+                    "  B: <one-line summary>\n"
+                    "  When A: <use cases>\n"
+                    "  When B: <use cases>\n"
+                    "  Verdict: <which to prefer and why — 1-2 sentences>\n\n"
+                    "Max 12 lines. No markdown. No preamble."
+                )
+                result = call_ai_tip(cmp_prompt) or f"[{TIP_BACKEND} returned empty]"
+                ctx_append({"type": "tip_q", "query": f"compare {opt_a} vs {opt_b}"})
+                ctx_append({"type": "tip_a", "text": _sanitize_for_ctx(result)})
+                _last_tip_query  = query
+                _last_tip_answer = _sanitize_for_ctx(result, 300)
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
+        # ── Item 21: /tip explain [N] — explain last N commands in context ────
+        m_exp = re.match(r'^explain(?:\s+(\d+))?$', query.strip(), re.IGNORECASE)
+        if m_exp:
+            n = int(m_exp.group(1)) if m_exp.group(1) else 5
+            if TIP_BACKEND not in _AVAILABLE_BACKENDS:
+                result = f"[{TIP_BACKEND} not available — check config.json]"
+            elif not CMD_LOG.exists():
+                result = "No command log yet — run some commands first."
+            else:
+                try:
+                    recent_lines = _parse_jsonl_lines(
+                        CMD_LOG.read_text().strip().splitlines()[-n:]
+                    )
+                    cmds_str = "\n".join(
+                        f"  {c.get('ts','')[-8:]}  {c.get('cwd','~')}  $ {c.get('cmd','')}"
+                        for c in recent_lines
+                    )
+                    exp_prompt = (
+                        "You are a shell expert. Explain what this developer was doing and "
+                        "call out any issues or improvements:\n\n"
+                        f"Last {len(recent_lines)} commands:\n{cmds_str}\n\n"
+                        "Format:\n"
+                        "  What: <1-2 sentence summary of the task>\n"
+                        "  Issues: <any mistakes or risky commands — or 'none'>\n"
+                        "  Better: <1-2 improved alternatives — or 'looks fine'>\n\n"
+                        "Max 10 lines. No markdown. No preamble."
+                    )
+                    result = call_ai_tip(exp_prompt) or f"[{TIP_BACKEND} returned empty]"
+                    ctx_append({"type": "tip_q", "query": f"explain last {n} commands"})
+                    ctx_append({"type": "tip_a", "text": _sanitize_for_ctx(result)})
+                    _last_tip_query  = query
+                    _last_tip_answer = _sanitize_for_ctx(result, 300)
+                except Exception as e2:
+                    result = f"[explain error: {e2}]"
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
+        # ── Item 22: /tip note <text> — save a reminder to session context ────
+        m_note = re.match(r'^note\s+(.+)$', query.strip(), re.IGNORECASE)
+        if m_note:
+            note_text = m_note.group(1).strip()
+            ctx_append({
+                "type": "note",
+                "text": note_text,
+                "ts":   datetime.now().isoformat(timespec="seconds"),
+            })
+            result = (
+                f"Note saved:\n  {note_text}\n\n"
+                f"Notes are included in future /tip prompts for context.\n"
+                f"View them with: /tip context"
+            )
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
+        # ── Item 23: /tip forget [N|all] — trim or clear session context ──────
+        m_forget = re.match(r'^forget(?:\s+(\d+|all))?$', query.strip(), re.IGNORECASE)
+        if m_forget:
+            arg = m_forget.group(1) or "20"
+            if not UNIFIED_CTX.exists():
+                result = "Session context is already empty."
+            elif arg.lower() == "all":
+                UNIFIED_CTX.unlink(missing_ok=True)
+                result = "Session context cleared — all entries removed."
+            else:
+                n_trim = int(arg)
+                try:
+                    lines = UNIFIED_CTX.read_text().strip().splitlines()
+                    before = len(lines)
+                    kept = lines[n_trim:]
+                    UNIFIED_CTX.write_text("\n".join(kept) + ("\n" if kept else ""))
+                    result = (
+                        f"Trimmed {min(n_trim, before)} oldest entries "
+                        f"({before} → {len(kept)} remaining).\n"
+                        f"Use: /tip forget all   to wipe completely."
+                    )
+                except Exception as e2:
+                    result = f"[forget error: {e2}]"
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
         # Log the question to unified context immediately
         ctx_append({"type": "tip_q", "query": query})
 
@@ -1331,6 +1497,7 @@ def handle_tip_query():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_rule_hints(recent_cmds, last_shown):
+    global _last_shown_rule_ids
     silenced = _load_silenced_rules()
     # Delegate to KB engine if loaded (dispatcher architecture, sub-ms per cmd)
     if _KB_ENGINE and _KB_ENGINE.loaded:
@@ -1346,8 +1513,11 @@ def get_rule_hints(recent_cmds, last_shown):
                 ecmd  = entry.get("cmd", "")
                 if not (any(t in TAG_FILTER for t in etags) or ecmd in TAG_FILTER):
                     continue
+            if _adaptive_suppress(rid):           # item 19: back-off repeated rules
+                continue
             out.append((rid, hint_str))
         _update_rule_stats([r for r, _ in out])   # item 14: track frequency
+        _last_shown_rule_ids = [r for r, _ in out]  # item 19: link to feedback
         return out
 
     # Legacy fallback: flat UPGRADE_RULES scan
@@ -1401,6 +1571,10 @@ IDLE_TIPS = [
     ("/tip hints-log [N]",       "show history of displayed hints (default: last 20)"),
     ("/tip rule-stats",          "table of every rule's display count + last seen"),
     ("/tip search <keyword>",    "full-text search 1800+ KB rules by hint/tag/id"),
+    ("/tip compare A vs B",      "structured LLM comparison of two commands/tools"),
+    ("/tip explain [N]",         "explain your last N commands + call out any issues"),
+    ("/tip note <text>",         "save a reminder; injected into future /tip prompts"),
+    ("/tip forget [N|all]",      "trim N oldest / clear all session context entries"),
     ("hint prefixes",            "!! danger  !  warn  -> tip  => upgrade"),
     ("kb engine",                "1700+ regex rules across 40 categories — instant match"),
     ("3 hint layers",            "rules (<10ms) + ambient LLM + advisor background"),

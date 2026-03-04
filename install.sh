@@ -1236,6 +1236,10 @@ function /tip() {
         printf '\033[2m    /tip hints-log [N]        history of displayed hints (default: 20)\033[0m\n'
         printf '\033[2m    /tip rule-stats           table: every rule display count + last seen\033[0m\n'
         printf '\033[2m    /tip search <keyword>     full-text search 1800+ KB rules\033[0m\n'
+        printf '\033[2m    /tip compare A vs B       LLM comparison of two commands or tools\033[0m\n'
+        printf '\033[2m    /tip explain [N]          explain last N commands + flag issues (default: 5)\033[0m\n'
+        printf '\033[2m    /tip note <text>          save a reminder (injected into future prompts)\033[0m\n'
+        printf '\033[2m    /tip forget [N|all]       trim N oldest / wipe all session context\033[0m\n'
         printf '\033[2m    /tip postmortem           show last auto-drafted git commit message\033[0m\n'
         printf '\033[2m    /tip help                 this help\033[0m\n'
         echo ""
