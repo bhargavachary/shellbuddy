@@ -104,6 +104,37 @@ def _read_gpu() -> float:
     except Exception:
         return 0.0
 
+# ── Git state (branch + dirty flag) ─────────────────────────────────────────
+_git_cache: dict[str, tuple[str, float]] = {}   # cwd → (formatted, ts)
+_git_lock  = threading.Lock()
+
+def _get_git_state(cwd: str) -> str:
+    """Return 'git:branch[*]' string for the given directory, cached 15s."""
+    now = time.monotonic()
+    with _git_lock:
+        if cwd in _git_cache:
+            info, ts = _git_cache[cwd]
+            if now - ts < 15:
+                return info
+    try:
+        br = subprocess.run(
+            ['git', '-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'],
+            capture_output=True, text=True, timeout=2
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ['git', '-C', cwd, 'status', '--porcelain', '--untracked-files=no'],
+            capture_output=True, text=True, timeout=2
+        ).stdout.strip()
+        if not br or br == 'HEAD':   # detached / not a git repo
+            result = ''
+        else:
+            result = f'git:{br}' + ('*' if dirty else '')
+    except Exception:
+        result = ''
+    with _git_lock:
+        _git_cache[cwd] = (result, now)
+    return result
+
 # ── Shell context (cwd, conda env, python version) ───────────────────────────
 _ctx_cache = dict(py_ver='', py_ts=0.0)
 _ctx_lock  = threading.Lock()
@@ -149,13 +180,19 @@ def _tmux_main_pane_path() -> str:
 
 def _shell_context() -> str:
     """Returns formatted context string for title bar."""
-    cwd  = _short_path(_tmux_main_pane_path())
+    raw_cwd = _tmux_main_pane_path()
+    cwd  = _short_path(raw_cwd)
     env  = os.environ.get('CONDA_DEFAULT_ENV', '') or os.environ.get('VIRTUAL_ENV', '')
     if env:
         env = os.path.basename(env)
     py   = _get_py_version()
+    git  = _get_git_state(raw_cwd)   # item 12: git branch + dirty flag
     sep  = f'  {GREY}|{R}  '
     parts = [f'{DIM}{cwd}{R}']
+    if git:
+        # colour: green = clean, yellow = dirty (*)
+        gc = YELLOW if git.endswith('*') else GREEN
+        parts.append(f'{gc}{git}{R}')
     if py:
         parts.append(f'{DIM}python {R}{CYAN_D}{py}{R}')
     if env:
@@ -176,6 +213,19 @@ class _Hist:
     def __init__(self, n=80): self._b = [0.0] * n
     def push(self, v):        self._b = self._b[1:] + [v]
     def data(self):           return list(self._b)
+
+def _trend(history: list, window: int = 8, threshold: float = 2.5) -> str:
+    """Return ↑↓→ trend arrow based on recent history vs prior window."""
+    # Need at least 2*window samples to be meaningful
+    data = [v for v in history if v > 0]
+    if len(data) < window * 2:
+        return ' '
+    recent = sum(data[-window:]) / window
+    prior  = sum(data[-window * 2:-window]) / window
+    delta  = recent - prior
+    if delta > threshold:  return f'{RED}↑{R}'
+    if delta < -threshold: return f'{GREEN}↓{R}'
+    return f'{DIM}→{R}'
 
 _cpu_h = _Hist(); _gpu_h = _Hist(); _ram_h = _Hist(); _swp_h = _Hist()
 
@@ -258,16 +308,19 @@ def _render(cols: int):
     elif pres >= 50: pc_str = f'{YELLOW}med{R}'
     else:            pc_str = f'{RED}hi {R}'
 
-    def cell_bar(c, pct, val_str):
+    def cell_bar(c, pct, val_str, trend_arrow=' '):
         b = bar(pct, bar_w)
-        return f'  {c}{b}{R} {c}{val_str}{R}'
+        return f'  {c}{b}{R} {c}{val_str}{R}{trend_arrow}'
 
     swap_str = f'{su:.1f}G' if su >= 0.05 else '  -  '
+    # ── Item 18: trend arrows ─────────────────────────────────────────────────
+    cpu_tr = _trend(cd);  gpu_tr = _trend(gd)
+    ram_tr = _trend(rd);  swp_tr = _trend(sd)
     cells3 = [
-        cell_bar(cc, cpu,     f'{cpu:4.1f}%'),
-        cell_bar(gc, gpu,     f'{gpu:4.1f}%'),
-        cell_bar(rc, ram_pct, f'{ram_pct:4.1f}%'),
-        cell_bar(sc, swp_pct, f'{swap_str:<5}'),
+        cell_bar(cc, cpu,     f'{cpu:4.1f}%', cpu_tr),
+        cell_bar(gc, gpu,     f'{gpu:4.1f}%', gpu_tr),
+        cell_bar(rc, ram_pct, f'{ram_pct:4.1f}%', ram_tr),
+        cell_bar(sc, swp_pct, f'{swap_str:<5}', swp_tr),
         f'  {pc_str}  {DIM}{pres}%{R}      ',
     ]
     line3 = f'  {gsep}' + gsep.join(pad_cell(c, cell_w) for c in cells3) + gsep

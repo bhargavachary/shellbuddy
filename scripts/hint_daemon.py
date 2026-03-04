@@ -39,6 +39,8 @@ TIP_QUERY        = DATA_DIR / "tip_query.txt"
 TIP_RESULT       = DATA_DIR / "tip_result.txt"
 UNIFIED_CTX      = DATA_DIR / "unified_context.jsonl"  # single truth: rules+ambient+tips
 SILENCED_RULES   = DATA_DIR / "silenced_rules.json"    # rules suppressed via /tip silence
+HINTS_LOG        = DATA_DIR / "hints_log.jsonl"         # item 13: history of displayed hints
+RULE_STATS       = DATA_DIR / "rule_stats.json"         # item 14: rule display frequency
 
 # Defaults (overridden by config.json)
 HINT_BACKEND    = "copilot"
@@ -164,6 +166,31 @@ def _load_silenced_rules() -> dict:
         return {k: v for k, v in data.items() if v == 0 or v > now}
     except Exception:
         return {}
+
+
+def _update_rule_stats(rule_ids: list) -> None:
+    """Item 14: Increment shown counter for each rule_id in rule_stats.json."""
+    if not rule_ids:
+        return
+    try:
+        stats: dict = {}
+        if RULE_STATS.exists():
+            try:
+                stats = json.loads(RULE_STATS.read_text())
+            except Exception:
+                pass
+        now = time.time()
+        for rid in rule_ids:
+            entry = stats.setdefault(rid, {"shown": 0, "last_shown": 0.0,
+                                           "helpful": 0, "not_helpful": 0})
+            entry["shown"] += 1
+            entry["last_shown"] = now
+        # Write atomically
+        tmp = RULE_STATS.with_suffix(".tmp")
+        tmp.write_text(json.dumps(stats, indent=2))
+        tmp.rename(RULE_STATS)
+    except Exception:
+        pass  # stats are best-effort
 
 
 # ── KB hot-reload ─────────────────────────────────────────────────────────────
@@ -1160,6 +1187,113 @@ def handle_tip_query():
             tmp.rename(TIP_RESULT)
             return True
 
+        # ── Item 13: /tip hints-log [N] — show history of displayed hints ───────
+        m_hlog = re.match(r'^hints-log(?:\s+(\d+))?$', query.strip(), re.IGNORECASE)
+        if m_hlog:
+            n = int(m_hlog.group(1)) if m_hlog.group(1) else 20
+            if not HINTS_LOG.exists():
+                result = "No hints log yet — hints are recorded after the next hint cycle."
+            else:
+                try:
+                    raw = HINTS_LOG.read_text().strip().splitlines()
+                    entries = _parse_jsonl_lines(raw[-n:])
+                    if not entries:
+                        result = "Hints log is empty."
+                    else:
+                        lines_out = [f"/tip hints-log  (last {len(entries)} of {len(raw)} batches)", ""]
+                        for e in entries:
+                            ts   = e.get("ts", "")
+                            cwd_ = e.get("cwd", "")
+                            rule_hints_ = e.get("rules", [])
+                            ai_  = e.get("ai", [])
+                            lines_out.append(f"[{ts}]  {cwd_}")
+                            for rh in rule_hints_:
+                                lines_out.append(f"  !! {rh.get('id','?'):20}  {rh.get('hint','')[:55]}")
+                            for ah in ai_:
+                                lines_out.append(f"  ~  {ah[:65]}")
+                            lines_out.append("")
+                        result = "\n".join(lines_out).rstrip()
+                except Exception as e2:
+                    result = f"[hints-log error: {e2}]"
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
+        # ── Item 14: /tip rule-stats — show rule display frequency ───────────
+        if query.strip().lower() == "rule-stats":
+            if not RULE_STATS.exists():
+                result = "No rule stats yet — rules are tracked as hints fire."
+            else:
+                try:
+                    stats = json.loads(RULE_STATS.read_text())
+                    if not stats:
+                        result = "No rule stats recorded yet."
+                    else:
+                        sorted_rules = sorted(
+                            stats.items(),
+                            key=lambda kv: kv[1].get("shown", 0),
+                            reverse=True
+                        )[:20]
+                        lines_out = [f"Rule stats  ({len(stats)} rules seen total):", ""]
+                        lines_out.append(f"  {'Rule ID':<28} {'Shown':>6}  {'Last seen':>20}  {'Helpful':>8}")
+                        lines_out.append("  " + "─" * 70)
+                        for rid, s in sorted_rules:
+                            shown = s.get("shown", 0)
+                            last  = s.get("last_shown", 0)
+                            last_str = datetime.fromtimestamp(last).strftime("%Y-%m-%d %H:%M") if last else "never"
+                            hf    = s.get("helpful", 0)
+                            lines_out.append(
+                                f"  {rid:<28} {shown:>6}  {last_str:>20}  {hf:>8}"
+                            )
+                        result = "\n".join(lines_out)
+                except Exception as e2:
+                    result = f"[rule-stats error: {e2}]"
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
+        # ── Item 15: /tip search <keyword> — full-text KB search ──────────────
+        m_search = re.match(r'^search\s+(.+)$', query.strip(), re.IGNORECASE)
+        if m_search:
+            keyword = m_search.group(1).strip().lower()
+            if not (_KB_ENGINE and _KB_ENGINE.loaded):
+                result = "KB engine not loaded — run: python3 kb_builder.py"
+            else:
+                try:
+                    hits = []
+                    all_rule_lists = list(_KB_ENGINE._buckets.values()) + [_KB_ENGINE._generic]
+                    for rule_list in all_rule_lists:
+                        for _, entry in rule_list:
+                            if (keyword in entry.get("hint", "").lower()
+                                    or keyword in entry.get("detail", "").lower()
+                                    or keyword in " ".join(entry.get("tags", [])).lower()
+                                    or keyword in entry.get("id", "").lower()
+                                    or keyword in entry.get("cmd", "").lower()):
+                                hits.append(entry)
+                    if not hits:
+                        result = f"No KB rules matched '{keyword}'."
+                    else:
+                        hits = hits[:15]
+                        lines_out = [f"KB search: '{keyword}'  ({len(hits)} results)  "
+                                     f"(showing ≤15 of {_KB_ENGINE._count} rules)", ""]
+                        for e in hits:
+                            sev  = e.get("severity", "tip")
+                            eid  = e.get("id", "?")
+                            hint = e.get("hint", "")[:60]
+                            tags = ", ".join(e.get("tags", [])[:4])
+                            lines_out.append(f"  [{sev:<7}] {eid:<28} {hint}")
+                            if tags:
+                                lines_out.append(f"  {' ':10}  tags: {tags}")
+                        result = "\n".join(lines_out)
+                except Exception as e2:
+                    result = f"[search error: {e2}]"
+            tmp = TIP_RESULT.with_suffix(".tmp")
+            tmp.write_text(result)
+            tmp.rename(TIP_RESULT)
+            return True
+
         # Log the question to unified context immediately
         ctx_append({"type": "tip_q", "query": query})
 
@@ -1213,6 +1347,7 @@ def get_rule_hints(recent_cmds, last_shown):
                 if not (any(t in TAG_FILTER for t in etags) or ecmd in TAG_FILTER):
                     continue
             out.append((rid, hint_str))
+        _update_rule_stats([r for r, _ in out])   # item 14: track frequency
         return out
 
     # Legacy fallback: flat UPGRADE_RULES scan
@@ -1263,6 +1398,9 @@ IDLE_TIPS = [
     ("/tip context",             "show session context injected into prompts"),
     ("/tip silence <id> [days]", "suppress a noisy rule for N days (default: 7)"),
     ("/tip helpful",             "rate last /tip answer helpful (logged for analysis)"),
+    ("/tip hints-log [N]",       "show history of displayed hints (default: last 20)"),
+    ("/tip rule-stats",          "table of every rule's display count + last seen"),
+    ("/tip search <keyword>",    "full-text search 1800+ KB rules by hint/tag/id"),
     ("hint prefixes",            "!! danger  !  warn  -> tip  => upgrade"),
     ("kb engine",                "1700+ regex rules across 40 categories — instant match"),
     ("3 hint layers",            "rules (<10ms) + ambient LLM + advisor background"),
@@ -1332,6 +1470,20 @@ def write_hints(rule_hints, ai_hints, cwd, cmd_count, thinking=False, idle=False
         lines.append("")
 
     HINTS_OUT.write_text("\n".join(lines[:MAX_HINT_LINES + 2]))
+
+    # ── Item 13: append to hints_log.jsonl for /tip hints-log ─────────────────
+    if rule_hints or ai_hints:
+        try:
+            log_entry = json.dumps({
+                "ts":       datetime.now().isoformat(timespec="seconds"),
+                "cwd":      cwd_short,
+                "rules":    [{"id": rid, "hint": h} for rid, h in rule_hints],
+                "ai":       [l.strip() for l in (ai_hints or "").splitlines() if l.strip()][:5],
+            })
+            with open(HINTS_LOG, "a") as _hlf:
+                _hlf.write(log_entry + "\n")
+        except Exception:
+            pass  # best-effort
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
