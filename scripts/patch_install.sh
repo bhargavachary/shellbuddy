@@ -375,6 +375,7 @@ function /tip() {
         echo "  [timeout — daemon may not be running. Try: hints-start]"
     fi
 }
+function /configure() { /tip configure "\$@"; }
 # end shellbuddy
 RCEOF
 

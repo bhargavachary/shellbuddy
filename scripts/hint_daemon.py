@@ -1699,8 +1699,8 @@ def handle_tip_query():
             tmp.rename(TIP_RESULT)
             return True
 
-        # ── Item 31: /tip config [key [value]] — view / set config.json ───────
-        m_cfg = re.match(r'^config(?:\s+(\S+)(?:\s+(.+))?)?$', query.strip(), re.IGNORECASE)
+        # ── Item 31: /tip config|configure [key [value]] — view / set config.json
+        m_cfg = re.match(r'^(?:config|configure)(?:\s+(\S+)(?:\s+(.+))?)?$', query.strip(), re.IGNORECASE)
         if m_cfg:
             cfg_key = m_cfg.group(1)
             cfg_val = m_cfg.group(2)
@@ -1709,14 +1709,61 @@ def handle_tip_query():
                 if CONFIG_FILE.exists():
                     current_cfg = json.loads(CONFIG_FILE.read_text())
                 if cfg_key is None:
-                    # Show all config
-                    if not current_cfg:
-                        result = f"Config file empty or not found: {CONFIG_FILE}"
-                    else:
-                        lines_out = [f"Config: {CONFIG_FILE}", ""]
-                        for k, v in sorted(current_cfg.items()):
-                            lines_out.append(f"  {k:<35} = {json.dumps(v)}")
-                        result = "\n".join(lines_out)
+                    # Show all config — merge defaults with current for complete picture
+                    all_keys = {
+                        "hint_backend":        HINT_BACKEND,
+                        "hint_model":          HINT_MODEL,
+                        "hint_model_chain":    HINT_MODEL_CHAIN,
+                        "tip_backend":         TIP_BACKEND,
+                        "tip_model":           TIP_MODEL,
+                        "ollama_url":          OLLAMA_URL,
+                        "openai_url":          OPENAI_URL,
+                        "openai_model":        OPENAI_MODEL,
+                        "claude_model":        CLAUDE_MODEL,
+                        "copilot_model":       COPILOT_MODEL,
+                        "hint_interval_secs":  HINT_INTERVAL,
+                        "ai_throttle_secs":    AI_THROTTLE,
+                        "rule_cooldown_secs":  RULE_COOLDOWN,
+                        "advisor_throttle_secs": ADVISOR_THROTTLE,
+                        "advisor_window":      ADVISOR_WINDOW,
+                        "idle_timeout_secs":   IDLE_TIMEOUT,
+                        "context_max_entries":  CTX_MAX,
+                        "context_inject_entries": CTX_INJECT,
+                        "severity_filter":     SEVERITY_FILTER,
+                        "tag_filter":          TAG_FILTER,
+                        "enable_post_mortem":  ENABLE_POST_MORTEM,
+                        "enable_idle_tips":    ENABLE_IDLE_TIPS,
+                    }
+                    merged = {k: current_cfg.get(k, v) for k, v in all_keys.items()}
+                    lines_out = [f"Config: {CONFIG_FILE}", ""]
+                    lines_out.append("  ── AI Backend ──")
+                    for k in ["hint_backend","hint_model","hint_model_chain","tip_backend","tip_model"]:
+                        marker = " " if k in current_cfg else "*"
+                        lines_out.append(f" {marker} {k:<35} = {json.dumps(merged[k])}")
+                    lines_out.append("")
+                    lines_out.append("  ── Backend URLs ──")
+                    for k in ["ollama_url","openai_url","openai_model","claude_model","copilot_model"]:
+                        marker = " " if k in current_cfg else "*"
+                        lines_out.append(f" {marker} {k:<35} = {json.dumps(merged[k])}")
+                    lines_out.append("")
+                    lines_out.append("  ── Timing ──")
+                    for k in ["hint_interval_secs","ai_throttle_secs","rule_cooldown_secs","advisor_throttle_secs","idle_timeout_secs"]:
+                        marker = " " if k in current_cfg else "*"
+                        lines_out.append(f" {marker} {k:<35} = {json.dumps(merged[k])}")
+                    lines_out.append("")
+                    lines_out.append("  ── Context ──")
+                    for k in ["context_max_entries","context_inject_entries","advisor_window"]:
+                        marker = " " if k in current_cfg else "*"
+                        lines_out.append(f" {marker} {k:<35} = {json.dumps(merged[k])}")
+                    lines_out.append("")
+                    lines_out.append("  ── Features ──")
+                    for k in ["enable_post_mortem","enable_idle_tips","severity_filter","tag_filter"]:
+                        marker = " " if k in current_cfg else "*"
+                        lines_out.append(f" {marker} {k:<35} = {json.dumps(merged[k])}")
+                    lines_out.append("")
+                    lines_out.append("  * = using default (not set in config.json)")
+                    lines_out.append("  Set a value: /configure <key> <value>")
+                    result = "\n".join(lines_out)
                 elif cfg_val is None:
                     # Show specific key
                     if cfg_key in current_cfg:
@@ -1864,6 +1911,7 @@ IDLE_TIPS = [
     ("/tip perf",                "backend latency stats — avg/min/max per model"),
     ("/tip export [pattern]",    "dump matching KB rules to exported_rules.json"),
     ("/tip config [key [val]]",  "view or set config.json keys (hot-reload — no restart)"),
+    ("/configure [key [val]]",   "shorthand for /tip config — view/set all options"),
     ("hint prefixes",            "!! danger  !  warn  -> tip  => upgrade"),
     ("kb engine",                "1700+ regex rules across 40 categories — instant match"),
     ("3 hint layers",            "rules (<10ms) + ambient LLM + advisor background"),

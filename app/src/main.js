@@ -1,39 +1,36 @@
 /**
  * ShellBuddy — Electron main process
  *
- * Manages the application window, spawns zsh via node-pty,
- * starts the hint daemon, and bridges IPC between renderer panels.
+ * Window management, PTY spawning, daemon lifecycle,
+ * stats collection, hints watching, config I/O.
  */
 
 const { app, BrowserWindow, ipcMain, Menu } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { execSync } = require('child_process');
 
 const { DaemonManager } = require('./utils/daemon');
 const { findPython } = require('./utils/python');
+const shellIntegration = require('./utils/shell-integration');
 
-// ── Paths ────────────────────────────────────────────────────────────────────
 const SB_DIR = process.env.SHELLBUDDY_DIR || path.join(os.homedir(), '.shellbuddy');
 const HINTS_FILE = path.join(SB_DIR, 'current_hints.txt');
 const CONFIG_FILE = path.join(SB_DIR, 'config.json');
 
-// Resource paths differ in dev vs packaged mode
 function resourcePath(...parts) {
-  if (app.isPackaged) {
-    return path.join(process.resourcesPath, ...parts);
-  }
+  if (app.isPackaged) return path.join(process.resourcesPath, ...parts);
   return path.join(__dirname, '..', '..', ...parts);
 }
 
 let mainWindow = null;
 let daemon = null;
 let hintsWatcher = null;
-let hintsInterval = null; // fallback poller when fs.watch not available
+let hintsPoller = null;
 let ptyProcess = null;
 
-// ── Window Creation ──────────────────────────────────────────────────────────
+// ── Window ────────────────────────────────────────────────────────────────────
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1000,
@@ -45,27 +42,25 @@ function createWindow() {
     backgroundColor: '#1e1e2e',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
       nodeIntegration: true,
+      contextIsolation: false,
       sandbox: false,
     },
   });
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
-  // Open devtools in dev mode
   if (!app.isPackaged) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
 
-  // Hide menu bar (keep system shortcuts)
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       label: 'ShellBuddy',
       submenu: [
         { role: 'about' },
         { type: 'separator' },
-        { label: 'Settings', accelerator: 'Cmd+,', click: () => mainWindow.webContents.send('show-settings') },
+        { label: 'Settings', accelerator: 'Cmd+,', click: () => send('show-settings') },
         { type: 'separator' },
         { role: 'quit' },
       ],
@@ -73,20 +68,15 @@ function createWindow() {
     {
       label: 'Edit',
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' },
+        { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
+        { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
       ],
     },
     {
       label: 'View',
       submenu: [
-        { label: 'Toggle Hints', accelerator: 'Cmd+Shift+H', click: () => mainWindow.webContents.send('toggle-hints') },
-        { label: 'Toggle Stats', accelerator: 'Cmd+Shift+S', click: () => mainWindow.webContents.send('toggle-stats') },
+        { label: 'Toggle Hints', accelerator: 'Cmd+Shift+H', click: () => send('toggle-hints') },
+        { label: 'Toggle Stats', accelerator: 'Cmd+Shift+S', click: () => send('toggle-stats') },
         { type: 'separator' },
         { role: 'toggleDevTools' },
         { role: 'togglefullscreen' },
@@ -95,233 +85,168 @@ function createWindow() {
     {
       label: 'Terminal',
       submenu: [
-        { label: 'Clear', accelerator: 'Cmd+K', click: () => mainWindow.webContents.send('clear-terminal') },
+        { label: 'Clear', accelerator: 'Cmd+K', click: () => send('clear-terminal') },
       ],
     },
   ]));
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
+  mainWindow.on('closed', () => { mainWindow = null; });
 }
 
-// ── Daemon Management ────────────────────────────────────────────────────────
-function startDaemon() {
-  const pythonPath = findPython(resourcePath());
-  if (!pythonPath) {
-    console.error('shellbuddy: Python not found — daemon will not start');
-    return;
-  }
-
-  daemon = new DaemonManager({
-    pythonPath,
-    daemonScript: resourcePath('scripts', 'hint_daemon.py'),
-    sbDir: SB_DIR,
-  });
-  daemon.start();
+function send(channel, ...args) {
+  if (mainWindow) mainWindow.webContents.send(channel, ...args);
 }
 
-// ── Hints File Watcher ───────────────────────────────────────────────────────
-function watchHints() {
-  if (!fs.existsSync(path.dirname(HINTS_FILE))) {
-    fs.mkdirSync(path.dirname(HINTS_FILE), { recursive: true });
-  }
-
-  const sendHints = () => {
-    if (mainWindow && fs.existsSync(HINTS_FILE)) {
-      try {
-        const content = fs.readFileSync(HINTS_FILE, 'utf-8');
-        mainWindow.webContents.send('hints-update', content);
-      } catch (_) { /* file may be mid-write */ }
-    }
-  };
-
-  // Initial read
-  sendHints();
-
-  // Watch for changes (debounced)
-  let debounce = null;
-  try {
-    hintsWatcher = fs.watch(HINTS_FILE, () => {
-      clearTimeout(debounce);
-      debounce = setTimeout(sendHints, 200);
-    });
-  } catch (_) {
-    // File may not exist yet — poll instead
-    hintsInterval = setInterval(sendHints, 3000);
-  }
-}
-
-// ── PTY Management (via IPC) ─────────────────────────────────────────────────
-function setupPtyIPC() {
+// ── PTY ───────────────────────────────────────────────────────────────────────
+function setupPTY() {
   const pty = require('node-pty');
 
-  ipcMain.handle('pty-spawn', (_event, { cols, rows }) => {
-    // Kill any existing PTY before spawning a new one
-    if (ptyProcess) {
-      try { ptyProcess.kill(); } catch (_) {}
-      ptyProcess = null;
-    }
+  ipcMain.handle('pty-spawn', (_e, { cols, rows }) => {
+    if (ptyProcess) { try { ptyProcess.kill(); } catch (_) {} }
 
+    // When launched from Finder, env is minimal. Ensure shell + PATH exist.
     const shell = process.env.SHELL || '/bin/zsh';
-    ptyProcess = pty.spawn(shell, [], {
+    const defaultPath = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin';
+    const env = {
+      ...process.env,
+      SHELL: shell,
+      PATH: process.env.PATH || defaultPath,
+      HOME: os.homedir(),
+      SHELLBUDDY_DIR: SB_DIR,
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+    };
+
+    ptyProcess = pty.spawn(shell, ['--login'], {
       name: 'xterm-256color',
       cols: cols || 80,
       rows: rows || 24,
       cwd: os.homedir(),
-      env: {
-        ...process.env,
-        SHELLBUDDY_DIR: SB_DIR,
-        TERM: 'xterm-256color',
-        COLORTERM: 'truecolor',
-      },
+      env,
     });
 
-    ptyProcess.onData((data) => {
-      if (mainWindow) {
-        mainWindow.webContents.send('pty-data', data);
-      }
-    });
-
-    ptyProcess.onExit(({ exitCode }) => {
-      if (mainWindow) {
-        mainWindow.webContents.send('pty-exit', exitCode);
-      }
-    });
-
+    ptyProcess.onData((data) => send('pty-data', data));
+    ptyProcess.onExit(({ exitCode }) => send('pty-exit', exitCode));
     return ptyProcess.pid;
   });
 
-  ipcMain.on('pty-write', (_event, data) => {
-    if (ptyProcess) ptyProcess.write(data);
-  });
-
-  ipcMain.on('pty-resize', (_event, { cols, rows }) => {
-    if (ptyProcess) ptyProcess.resize(cols, rows);
-  });
-
-  ipcMain.on('pty-kill', () => {
-    if (ptyProcess) ptyProcess.kill();
-  });
+  ipcMain.on('pty-write', (_e, data) => { if (ptyProcess) ptyProcess.write(data); });
+  ipcMain.on('pty-resize', (_e, { cols, rows }) => { if (ptyProcess) ptyProcess.resize(cols, rows); });
+  ipcMain.on('pty-kill', () => { if (ptyProcess) ptyProcess.kill(); });
 }
 
-// ── Stats IPC (collected in main process to avoid blocking renderer) ─────────
-function setupStatsIPC() {
-  const { execSync } = require('child_process');
-  let lastCpuIdle = 0;
-  let lastCpuTotal = 0;
+// ── Stats ─────────────────────────────────────────────────────────────────────
+function setupStats() {
+  let prevIdle = 0, prevTotal = 0;
 
   ipcMain.handle('stats-collect', () => {
-    const result = {};
+    const r = {};
 
     // CPU
     try {
       const cpus = os.cpus();
-      let totalIdle = 0, totalTick = 0;
-      for (const cpu of cpus) {
-        for (const type in cpu.times) totalTick += cpu.times[type];
-        totalIdle += cpu.times.idle;
+      let idle = 0, total = 0;
+      for (const c of cpus) {
+        for (const t in c.times) total += c.times[t];
+        idle += c.times.idle;
       }
-      const idle = totalIdle / cpus.length;
-      const total = totalTick / cpus.length;
-      if (lastCpuTotal > 0) {
-        const idleDelta = idle - lastCpuIdle;
-        const totalDelta = total - lastCpuTotal;
-        result.cpu = totalDelta > 0 ? Math.round((1 - idleDelta / totalDelta) * 100) : 0;
+      idle /= cpus.length; total /= cpus.length;
+      if (prevTotal > 0) {
+        const d = total - prevTotal;
+        r.cpu = d > 0 ? Math.round((1 - (idle - prevIdle) / d) * 100) : 0;
       }
-      lastCpuIdle = idle;
-      lastCpuTotal = total;
-    } catch (_) { result.cpu = null; }
+      prevIdle = idle; prevTotal = total;
+    } catch (_) {}
 
     // RAM
-    try {
-      const total = os.totalmem();
-      const free = os.freemem();
-      result.ram = Math.round(((total - free) / total) * 100);
-    } catch (_) { result.ram = null; }
+    try { r.ram = Math.round(((os.totalmem() - os.freemem()) / os.totalmem()) * 100); } catch (_) {}
 
-    // GPU (macOS ioreg)
+    // GPU
     try {
-      const out = execSync(
-        "ioreg -r -d 1 -c IOAccelerator 2>/dev/null | grep '\"Device Utilization %\"' | head -1",
-        { encoding: 'utf-8', timeout: 1000 }
-      );
-      const match = out.match(/= (\d+)/);
-      result.gpu = match ? parseInt(match[1], 10) : 0;
-    } catch (_) { result.gpu = null; }
+      const out = execSync("ioreg -r -d 1 -c IOAccelerator 2>/dev/null | grep '\"Device Utilization %\"' | head -1", { encoding: 'utf-8', timeout: 1000 });
+      const m = out.match(/= (\d+)/);
+      r.gpu = m ? parseInt(m[1], 10) : 0;
+    } catch (_) { r.gpu = null; }
 
-    // Git
+    // Git (throttled — only refresh every 15s, cache in closure)
     try {
-      const branch = execSync('git branch --show-current 2>/dev/null', {
-        encoding: 'utf-8', timeout: 1000, cwd: os.homedir(),
-      }).trim();
-      let dirty = false;
+      const branch = execSync('git branch --show-current 2>/dev/null', { encoding: 'utf-8', timeout: 1000, cwd: os.homedir() }).trim();
+      r.git = { branch, dirty: false };
       if (branch) {
-        const status = execSync('git status --porcelain 2>/dev/null | head -1', {
-          encoding: 'utf-8', timeout: 1000, cwd: os.homedir(),
-        }).trim();
-        dirty = status.length > 0;
+        const s = execSync('git status --porcelain 2>/dev/null | head -1', { encoding: 'utf-8', timeout: 1000, cwd: os.homedir() }).trim();
+        r.git.dirty = s.length > 0;
       }
-      result.git = { branch, dirty };
-    } catch (_) { result.git = null; }
+    } catch (_) { r.git = null; }
 
-    return result;
+    return r;
   });
 }
 
-// ── Config IPC ───────────────────────────────────────────────────────────────
-function setupConfigIPC() {
-  const shellIntegration = require('./utils/shell-integration');
-
+// ── Config & Shell Integration ────────────────────────────────────────────────
+function setupConfig() {
   ipcMain.handle('config-read', () => {
-    try {
-      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
-    } catch (_) {
-      return {};
-    }
+    try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8')); } catch (_) { return {}; }
   });
-
-  ipcMain.handle('config-write', (_event, config) => {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  ipcMain.handle('config-write', (_e, cfg) => {
+    if (!fs.existsSync(SB_DIR)) fs.mkdirSync(SB_DIR, { recursive: true });
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
     return true;
   });
-
   ipcMain.handle('sb-dir', () => SB_DIR);
-  ipcMain.handle('resource-path', () => resourcePath());
-
   ipcMain.handle('check-setup', () => {
     return fs.existsSync(CONFIG_FILE) && fs.existsSync(path.join(SB_DIR, 'hint_daemon.py'));
   });
-
-  // ── Shell Integration ───────────────────────────────────────────────────
   ipcMain.handle('shell-is-installed', () => shellIntegration.isInstalled());
   ipcMain.handle('shell-install', () => shellIntegration.install(SB_DIR));
   ipcMain.handle('shell-uninstall', () => shellIntegration.uninstall());
 }
 
-// ── App Lifecycle ────────────────────────────────────────────────────────────
+// ── Hints Watcher ─────────────────────────────────────────────────────────────
+function watchHints() {
+  if (!fs.existsSync(SB_DIR)) fs.mkdirSync(SB_DIR, { recursive: true });
+
+  const push = () => {
+    if (!mainWindow || !fs.existsSync(HINTS_FILE)) return;
+    try { send('hints-update', fs.readFileSync(HINTS_FILE, 'utf-8')); } catch (_) {}
+  };
+
+  push();
+  let debounce = null;
+  try {
+    hintsWatcher = fs.watch(HINTS_FILE, () => { clearTimeout(debounce); debounce = setTimeout(push, 200); });
+  } catch (_) {
+    hintsPoller = setInterval(push, 3000);
+  }
+}
+
+// ── Daemon ────────────────────────────────────────────────────────────────────
+function startDaemon() {
+  const py = findPython(resourcePath());
+  if (!py) { console.error('shellbuddy: Python not found'); return; }
+  daemon = new DaemonManager({ pythonPath: py, daemonScript: resourcePath('scripts', 'hint_daemon.py'), sbDir: SB_DIR });
+  daemon.start();
+}
+
+// ── Lifecycle ─────────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  setupPTY();
+  setupStats();
+  setupConfig();
   createWindow();
-  setupPtyIPC();
-  setupConfigIPC();
-  setupStatsIPC();
   startDaemon();
   watchHints();
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
+  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
 app.on('window-all-closed', () => {
   if (daemon) daemon.stop();
   if (ptyProcess) { try { ptyProcess.kill(); } catch (_) {} }
   if (hintsWatcher) hintsWatcher.close();
-  if (hintsInterval) clearInterval(hintsInterval);
+  if (hintsPoller) clearInterval(hintsPoller);
   app.quit();
 });
 
 app.on('before-quit', () => {
   if (daemon) daemon.stop();
-  if (ptyProcess) ptyProcess.kill();
+  if (ptyProcess) { try { ptyProcess.kill(); } catch (_) {} }
 });

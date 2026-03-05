@@ -2,14 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- CSP relaxed for nodeIntegration (local-only app, no remote content) -->
   <title>ShellBuddy</title>
   <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <!-- Setup Wizard (shown on first run) -->
+  <!-- Setup Wizard (first run) -->
   <div id="setup-wizard" class="panel hidden">
     <div class="wizard-container">
       <div class="wizard-logo">
@@ -28,34 +26,34 @@
 
       <div class="wizard-step" id="step-backend">
         <h2>Choose an AI Backend</h2>
-        <p class="step-desc">ShellBuddy watches your commands and gives contextual hints. Pick an AI backend for smarter suggestions:</p>
+        <p class="step-desc">Pick an AI backend for smarter suggestions:</p>
         <div class="backend-options">
           <label class="backend-option">
             <input type="radio" name="backend" value="copilot">
             <span class="option-card">
               <strong>GitHub Copilot</strong>
-              <span>Uses your VS Code Copilot subscription. No extra cost.</span>
+              <span>Uses your VS Code Copilot subscription.</span>
             </span>
           </label>
           <label class="backend-option">
             <input type="radio" name="backend" value="ollama" checked>
             <span class="option-card">
               <strong>Ollama (Local)</strong>
-              <span>Free, private, runs on your Mac. Requires Ollama installed.</span>
+              <span>Free, private, runs on your Mac.</span>
             </span>
           </label>
           <label class="backend-option">
             <input type="radio" name="backend" value="claude">
             <span class="option-card">
               <strong>Claude (Anthropic)</strong>
-              <span>Requires ANTHROPIC_API_KEY environment variable.</span>
+              <span>Requires ANTHROPIC_API_KEY env var.</span>
             </span>
           </label>
           <label class="backend-option">
             <input type="radio" name="backend" value="none">
             <span class="option-card">
               <strong>No AI (Rules Only)</strong>
-              <span>Just regex-based KB hints. No network calls.</span>
+              <span>Regex-based KB hints only. No network.</span>
             </span>
           </label>
         </div>
@@ -63,8 +61,7 @@
 
       <div class="wizard-step" id="step-shell">
         <h2>Shell Integration</h2>
-        <p class="step-desc">To log commands from your other terminals (iTerm2, Terminal.app), ShellBuddy
-          needs to add a small block to your <code>~/.zshrc</code>.</p>
+        <p class="step-desc">Patch <code>~/.zshrc</code> so other terminals also log commands to ShellBuddy.</p>
         <label class="checkbox-label">
           <input type="checkbox" id="patch-zshrc" checked>
           <span>Patch ~/.zshrc for command logging</span>
@@ -90,9 +87,8 @@
     </div>
   </div>
 
-  <!-- Main App Layout -->
+  <!-- Main App -->
   <div id="app" class="hidden">
-    <!-- Stats Bar -->
     <div id="stats-bar" class="stats-bar">
       <span id="stat-cpu" class="stat-cell">CPU ░░░░░░ --% </span>
       <span id="stat-ram" class="stat-cell">RAM ░░░░░░ --% </span>
@@ -100,16 +96,14 @@
       <span id="stat-git" class="stat-cell git-state"></span>
     </div>
 
-    <!-- Hints Panel (resizable) -->
     <div id="hints-panel" class="hints-panel">
       <div class="panel-label">HINTS</div>
       <div id="hints-resize" class="resize-handle"></div>
       <div id="hints-content" class="hints-content">
-        <span class="hint-placeholder">Waiting for hints... type a few commands below to get started</span>
+        <span class="hint-placeholder">Waiting for hints... type a few commands below</span>
       </div>
     </div>
 
-    <!-- Terminal -->
     <div id="terminal-container" class="terminal-container">
       <div class="panel-label terminal-label">TERMINAL</div>
     </div>

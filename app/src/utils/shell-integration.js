@@ -34,6 +34,7 @@ function /tip() {
   local i=0; while [[ ! -f "$rf" ]] && (( i++ < 120 )); do sleep 0.5; done
   [[ -f "$rf" ]] && cat "$rf" || echo "shellbuddy: timeout waiting for response"
 }
+function /configure() { /tip configure "$@"; }
 ${MARKER_END}`;
 }
 
