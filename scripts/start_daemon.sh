@@ -8,9 +8,17 @@ DAEMON_PY="$SB_DIR/hint_daemon.py"
 DAEMON_PID="$SB_DIR/daemon.pid"
 DAEMON_LOG="$SB_DIR/daemon.log"
 
-# Use conda python if available, else fall back to system python3
+# Use conda python if available, else fall back to system python3.
+# Check explicit CONDA_PREFIX first, then well-known miniconda/anaconda locations.
 PYTHON="${SHELLBUDDY_PYTHON:-$(command -v python3)}"
-[[ -f "$CONDA_PREFIX/bin/python3" ]] && PYTHON="$CONDA_PREFIX/bin/python3"
+for _conda_py in \
+    "${CONDA_PREFIX}/bin/python3" \
+    "${HOME}/miniconda3/bin/python3" \
+    "${HOME}/anaconda3/bin/python3" \
+    "${HOME}/miniforge3/bin/python3"; do
+    [[ -f "$_conda_py" ]] && PYTHON="$_conda_py" && break
+done
+unset _conda_py
 
 # Check if already running
 if [[ -f "$DAEMON_PID" ]]; then

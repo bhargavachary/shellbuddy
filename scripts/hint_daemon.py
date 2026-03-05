@@ -575,6 +575,10 @@ def _call_claude(prompt, model=None):
     if not api_key:
         return None
 
+    # Reject model names that belong to other backends (e.g. "gpt-4.1" or "gpt-5-mini"
+    # passed as defaults when switching to claude backend without setting claude_model).
+    if model and not model.lower().startswith("claude"):
+        model = None
     model = model or CLAUDE_MODEL
     max_tokens = 1024 if "sonnet" in model or "opus" in model else 500
 
@@ -601,6 +605,14 @@ def _call_claude(prompt, model=None):
         ms = (time.perf_counter() - t0) * 1000
         print(f"  backend: claude/{model} {ms:.0f}ms", flush=True)
         return result
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode("utf-8", errors="replace"))
+            msg = body.get("error", {}).get("message", str(e))
+        except Exception:
+            msg = str(e)
+        print(f"  claude error [{e.code}]: {msg}", flush=True)
+        return None
     except Exception as e:
         print(f"  claude error: {e}", flush=True)
         return None
@@ -690,13 +702,25 @@ def call_ai_hint(prompt):
         return ""
     if HINT_BACKEND == "copilot":
         return _call_copilot_chain(prompt, models=HINT_MODEL_CHAIN, max_tokens=300) or ""
-    return _call_backend(HINT_BACKEND, prompt, model=HINT_MODEL) or ""
+    result = _call_backend(HINT_BACKEND, prompt, model=HINT_MODEL or None) or ""
+    # Fallback: if primary backend failed, try copilot
+    if not result and "copilot" in _AVAILABLE_BACKENDS:
+        print(f"  hint fallback: {HINT_BACKEND} failed → copilot", flush=True)
+        result = _call_copilot_chain(prompt, models=HINT_MODEL_CHAIN, max_tokens=300) or ""
+    return result
 
 
 def call_ai_tip(prompt):
     if TIP_BACKEND not in _AVAILABLE_BACKENDS:
         return ""
-    return _call_backend(TIP_BACKEND, prompt, model=TIP_MODEL) or ""
+    if TIP_BACKEND == "copilot":
+        return _call_copilot(prompt, model=TIP_MODEL or COPILOT_MODEL, max_tokens=500) or ""
+    result = _call_backend(TIP_BACKEND, prompt, model=TIP_MODEL or None) or ""
+    # Fallback: if primary backend failed, try copilot
+    if not result and "copilot" in _AVAILABLE_BACKENDS:
+        print(f"  tip fallback: {TIP_BACKEND} failed → copilot", flush=True)
+        result = _call_copilot(prompt, model=COPILOT_MODEL, max_tokens=500) or ""
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

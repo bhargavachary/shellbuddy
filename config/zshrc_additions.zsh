@@ -219,16 +219,39 @@ function /tip() {
     fi
     local QUERY_FILE="$SHELLBUDDY_DIR/tip_query.txt"
     local RESULT_FILE="$SHELLBUDDY_DIR/tip_result.txt"
+    local PID_FILE="$SHELLBUDDY_DIR/daemon.pid"
 
-    # Write query for the daemon to pick up
+    # Auto-start daemon if not running
+    local daemon_ok=false
+    if [[ -f "$PID_FILE" ]]; then
+        local dpid=$(cat "$PID_FILE" 2>/dev/null)
+        [[ -n "$dpid" ]] && kill -0 "$dpid" 2>/dev/null && daemon_ok=true
+    fi
+    if ! $daemon_ok; then
+        printf '\033[33m  [>_] daemon not running — starting...\033[0m\n'
+        SHELLBUDDY_DIR="$SHELLBUDDY_DIR" source "$SHELLBUDDY_DIR/start_daemon.sh"
+        sleep 1
+        local dpid=$(cat "$PID_FILE" 2>/dev/null)
+        if [[ -z "$dpid" ]] || ! kill -0 "$dpid" 2>/dev/null; then
+            printf '\033[31m  [>_] failed to start daemon — check: hints-log\033[0m\n'
+            return 1
+        fi
+    fi
+
+    # Clean any stale result, write query
+    rm -f "$RESULT_FILE" "${RESULT_FILE}.tmp"
     echo "$query" > "$QUERY_FILE"
-
-    # Wait for result (daemon polls every 3s, but tip is handled on every cycle)
     printf '\033[36m  [>_] thinking...\033[0m'
+
+    # Wait up to 120s for the result file (fallback model may be slow)
     local waited=0
-    while [[ -f "$QUERY_FILE" ]] && (( waited < 30 )); do
+    while [[ ! -f "$RESULT_FILE" ]] && (( waited < 240 )); do
         sleep 0.5
         waited=$((waited + 1))
+        # Show progress dots every 5 seconds
+        if (( waited % 10 == 0 )); then
+            printf '.'
+        fi
     done
     printf '\r\033[K'
 
@@ -242,7 +265,8 @@ function /tip() {
         echo ""
         rm -f "$RESULT_FILE"
     else
-        echo "  [timeout — daemon may not be running. Try: hints-start]"
+        printf '\033[31m  [>_] timeout — model may be slow or unavailable\033[0m\n'
+        printf '\033[2m  check: hints-log  |  retry: /tip %s\033[0m\n' "$query"
     fi
 }
 
