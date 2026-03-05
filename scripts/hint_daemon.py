@@ -132,25 +132,37 @@ def _load_config():
         return
 
     with _config_lock:
-        HINT_BACKEND       = cfg.get("hint_backend",       HINT_BACKEND)
-        HINT_MODEL         = cfg.get("hint_model",         HINT_MODEL)
-        HINT_MODEL_CHAIN   = cfg.get("hint_model_chain",   HINT_MODEL_CHAIN)
-        TIP_BACKEND        = cfg.get("tip_backend",        TIP_BACKEND)
-        TIP_MODEL          = cfg.get("tip_model",          TIP_MODEL)
-        OLLAMA_URL         = cfg.get("ollama_url",         OLLAMA_URL)
-        CLAUDE_MODEL       = cfg.get("claude_model",       CLAUDE_MODEL)
-        COPILOT_MODEL      = cfg.get("copilot_model",      COPILOT_MODEL)
-        OPENAI_URL         = cfg.get("openai_url",         OPENAI_URL)
-        OPENAI_MODEL       = cfg.get("openai_model",       OPENAI_MODEL)
+        # Helper: treat empty strings as "not set" (use default)
+        def _get(key, default):
+            v = cfg.get(key)
+            return v if v is not None and v != "" else default
+
+        HINT_BACKEND       = _get("hint_backend",       HINT_BACKEND)
+        HINT_MODEL         = _get("hint_model",         HINT_MODEL)
+        HINT_MODEL_CHAIN   = cfg.get("hint_model_chain", HINT_MODEL_CHAIN) or HINT_MODEL_CHAIN
+        TIP_BACKEND        = _get("tip_backend",        TIP_BACKEND)
+        TIP_MODEL          = _get("tip_model",          TIP_MODEL)
+        OLLAMA_URL         = _get("ollama_url",         OLLAMA_URL)
+        CLAUDE_MODEL       = _get("claude_model",       CLAUDE_MODEL)
+        COPILOT_MODEL      = _get("copilot_model",      COPILOT_MODEL)
+        OPENAI_URL         = _get("openai_url",         OPENAI_URL)
+        OPENAI_MODEL       = _get("openai_model",       OPENAI_MODEL)
         # Tunable constants
-        if "hint_interval_secs"    in cfg: HINT_INTERVAL    = max(1,  int(cfg["hint_interval_secs"]))
-        if "ai_throttle_secs"      in cfg: AI_THROTTLE      = max(1,  int(cfg["ai_throttle_secs"]))
-        if "rule_cooldown_secs"    in cfg: RULE_COOLDOWN    = max(0,  int(cfg["rule_cooldown_secs"]))
-        if "advisor_throttle_secs" in cfg: ADVISOR_THROTTLE = max(1,  int(cfg["advisor_throttle_secs"]))
-        if "advisor_window"        in cfg: ADVISOR_WINDOW   = max(10, int(cfg["advisor_window"]))
-        if "context_max_entries"   in cfg: CTX_MAX          = max(50, int(cfg["context_max_entries"]))
-        if "context_inject_entries"in cfg: CTX_INJECT       = max(5,  int(cfg["context_inject_entries"]))
-        if "idle_timeout_secs"     in cfg: IDLE_TIMEOUT     = max(30, int(cfg["idle_timeout_secs"]))
+        # Tunable integers — only override if value is truthy (non-zero, non-empty)
+        def _int(key, default, lo):
+            v = cfg.get(key)
+            if v is not None and v != "" and v != 0:
+                return max(lo, int(v))
+            return default
+
+        HINT_INTERVAL    = _int("hint_interval_secs",    HINT_INTERVAL,    1)
+        AI_THROTTLE      = _int("ai_throttle_secs",      AI_THROTTLE,      1)
+        RULE_COOLDOWN    = _int("rule_cooldown_secs",    RULE_COOLDOWN,    0)
+        ADVISOR_THROTTLE = _int("advisor_throttle_secs", ADVISOR_THROTTLE, 1)
+        ADVISOR_WINDOW   = _int("advisor_window",        ADVISOR_WINDOW,   10)
+        CTX_MAX          = _int("context_max_entries",    CTX_MAX,          50)
+        CTX_INJECT       = _int("context_inject_entries", CTX_INJECT,      5)
+        IDLE_TIMEOUT     = _int("idle_timeout_secs",     IDLE_TIMEOUT,     30)
         if "severity_filter"       in cfg: SEVERITY_FILTER  = list(cfg["severity_filter"])
         if "tag_filter"            in cfg: TAG_FILTER        = list(cfg["tag_filter"])
         if "enable_post_mortem"    in cfg: ENABLE_POST_MORTEM = bool(cfg["enable_post_mortem"])

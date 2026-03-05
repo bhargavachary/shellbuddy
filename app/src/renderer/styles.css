@@ -60,6 +60,7 @@ html, body {
   display: flex;
   align-items: center;
   padding: 0 12px 0 var(--titlebar-inset);
+  justify-content: flex-end;
   gap: 16px;
   font-size: 11px;
   -webkit-app-region: drag;
