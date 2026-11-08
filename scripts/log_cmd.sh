@@ -23,6 +23,12 @@ local CMD_L="${CMD:l}"
 [[ "$CMD_L" == *"secret"* ]]        && return
 [[ "$CMD_L" == *"password"* ]]      && return
 [[ "$CMD_L" == *"access_token"* ]]  && return
+[[ "$CMD_L" == *"bearer "* ]]       && return
+[[ "$CMD_L" == *"id_rsa"* ]]        && return
+[[ "$CMD_L" == *"ssh-add "* ]]      && return
+[[ "$CMD_L" == *"ghp_"* ]]          && return
+[[ "$CMD_L" == *"aws_access_key"* ]] && return
+[[ "$CMD_L" == *"aws_secret"* ]]    && return
 [[ "$CMD_L" == export\ *key=* ]]    && return
 [[ "$CMD_L" == export\ *token=* ]]  && return
 [[ "$CMD_L" == curl*authorization:* ]] && return

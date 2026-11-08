@@ -148,11 +148,14 @@ def _load_config():
         OPENAI_URL         = _get("openai_url",         OPENAI_URL)
         OPENAI_MODEL       = _get("openai_model",       OPENAI_MODEL)
         # Tunable constants
-        # Tunable integers — only override if value is truthy (non-zero, non-empty)
+        # Tunable integers — override if value is provided and non-empty
         def _int(key, default, lo):
             v = cfg.get(key)
-            if v is not None and v != "" and v != 0:
-                return max(lo, int(v))
+            if v is not None and v != "":
+                try:
+                    return max(lo, int(v))
+                except (ValueError, TypeError):
+                    return default
             return default
 
         HINT_INTERVAL    = _int("hint_interval_secs",    HINT_INTERVAL,    1)

@@ -12,6 +12,7 @@ import re
 import time
 from pathlib import Path
 from collections import defaultdict
+from typing import Optional
 
 KB_PATH     = Path(__file__).parent / "kb.json"
 INSTALL_KB  = Path.home() / ".shellbuddy" / "kb.json"
@@ -191,7 +192,7 @@ class KBEngine:
 
 
 # ── Singleton for import into hint_daemon ────────────────────────────────────
-_engine: KBEngine | None = None
+_engine: Optional[KBEngine] = None
 
 def get_engine(kb_path=None) -> KBEngine:
     global _engine
