@@ -24,6 +24,7 @@ help:
 	@echo "  ────────────────────────────"
 	@echo "  make test      Run 139-test suite"
 	@echo "  make lint      Syntax-check Python files"
+	@echo "  make demo      Run standalone KB dispatch engine demo"
 	@echo "  make dist      Build $(DIST_FILE)"
 	@echo "  make release   test + dist + tagging instructions"
 	@echo "  make clean     Remove built .tar.gz files"
@@ -47,12 +48,18 @@ test:
 lint:
 	@echo "  Checking Python syntax..."
 	@$(PYTHON) -m py_compile scripts/hint_daemon.py    && echo "  OK  scripts/hint_daemon.py"
+	@$(PYTHON) -m py_compile scripts/demo.py           && echo "  OK  scripts/demo.py"
 	@$(PYTHON) -m py_compile kb_engine.py              && echo "  OK  kb_engine.py"
 	@$(PYTHON) -m py_compile kb_builder.py             && echo "  OK  kb_builder.py"
 	@$(PYTHON) -m py_compile backends/copilot.py       && echo "  OK  backends/copilot.py"
 	@$(PYTHON) -m py_compile backends/ollama.py        && echo "  OK  backends/ollama.py"
 	@$(PYTHON) -m py_compile backends/openai_compat.py && echo "  OK  backends/openai_compat.py"
 	@echo "  All syntax checks passed."
+
+# ── Demo ──────────────────────────────────────────────────────────────────────
+.PHONY: demo
+demo:
+	@$(PYTHON) scripts/demo.py --sample
 
 # ── Dist tarball ──────────────────────────────────────────────────────────────
 # Uses `git archive` — produces a perfectly clean tarball:

@@ -144,30 +144,28 @@ sb
 
 ## 7. Interactive Demonstration & Smoke Test
 
-You can benchmark and test the local Knowledge Base Engine immediately without starting a daemon:
+You can benchmark and test the local Knowledge Base Engine immediately without starting a daemon or tmux session:
 
 ```bash
-python3 kb_engine.py
+make demo
+# Or: python3 scripts/demo.py --sample
 ```
 
-Expected output:
-```text
-  kb_engine: 1835 rules loaded in 96.3ms (336 buckets, 1 generic)
-Stats: {'total': 1835, 'buckets': 336, 'generic': 1, 'load_ms': 96.3}
-
-Smoke test:
-  !! git push --force origin main  → Use --force-with-lease instead of --force
-  -> docker run -it ubuntu bash    → Add --rm to auto-remove containers after exit
-  !! chmod 777 /var/www/html       → Avoid 'chmod 777'; grants all permissions
-
-Benchmark (15 cmds × 1000 runs):
-   1000 runs:   115.7ms total    0.12ms/run
-```
-
-To run the automated unit test suite (139 tests):
+To enter an interactive prompt to test arbitrary commands in real time:
 
 ```bash
-make test
+python3 scripts/demo.py
+# shellbuddy> rm -rf /
+# [DANGER] !! Never run 'rm -rf /' — it erases your entire filesystem. (gnu-001) [8.5 µs]
+```
+
+### Developer Commands (`Makefile`)
+
+```bash
+make test      # Run full 139-test suite
+make lint      # Syntax-check all Python modules
+make demo      # Run standalone KB dispatch engine demo and micro-benchmark
+make dist      # Build distribution archive
 ```
 
 ---

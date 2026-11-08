@@ -182,6 +182,14 @@ class KBEngine:
         return self._count > 0
 
     @property
+    def count(self) -> int:
+        return self._count
+
+    @property
+    def load_time(self) -> float:
+        return self._load_time
+
+    @property
     def stats(self) -> dict:
         return {
             "total":    self._count,
