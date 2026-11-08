@@ -3,7 +3,7 @@
 > **Ambient, multi-layer terminal companion for modern developers.**  
 > Real-time system vitals, instant sub-millisecond safety rules, and context-aware LLM suggestions inside `tmux` without disrupting your shell workflow.
 
-[![Tests](https://img.shields.io/badge/tests-131%20passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-139%20passed-brightgreen.svg)](tests/)
 [![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue.svg)](requirements.txt)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)](SETUP.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -164,7 +164,7 @@ Benchmark (15 cmds × 1000 runs):
    1000 runs:   115.7ms total    0.12ms/run
 ```
 
-To run the automated unit test suite (131 tests):
+To run the automated unit test suite (139 tests):
 
 ```bash
 make test

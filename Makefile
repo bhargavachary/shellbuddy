@@ -22,7 +22,7 @@ help:
 	@echo ""
 	@echo "  shellbuddy build targets"
 	@echo "  ────────────────────────────"
-	@echo "  make test      Run 131-test suite"
+	@echo "  make test      Run 139-test suite"
 	@echo "  make lint      Syntax-check Python files"
 	@echo "  make dist      Build $(DIST_FILE)"
 	@echo "  make release   test + dist + tagging instructions"
