@@ -1,0 +1,33 @@
+name: Bug Report
+description: Create a report to help us fix a bug or unexpected behavior
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting an issue with ShellBuddy!
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the Bug
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps or exact command sequence to reproduce the issue.
+      placeholder: |
+        1. Run 'sb' inside tmux
+        2. Execute '...'
+        3. See error
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS version, Python version, tmux version, and shell (e.g. macOS Sonoma, Python 3.11, zsh 5.9, tmux 3.4).
+    validations:
+      required: true

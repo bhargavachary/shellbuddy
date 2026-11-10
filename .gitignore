@@ -30,9 +30,10 @@ app/.webpack/
 # Python venv
 .venv/
 
-# Editor
+# Editor and agent scratchpads
 *.swp
 *.swo
 *~
 .vscode/
 .idea/
+SCRATCHPAD.md

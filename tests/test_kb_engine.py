@@ -14,7 +14,7 @@ from pathlib import Path
 
 # Ensure repo root is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from kb_engine import KBEngine, SEVERITY_PREFIX
+from kb_engine import KBEngine, SEVERITY_PREFIX, extract_command_token_and_tail
 
 
 # ── Minimal KB fixture ────────────────────────────────────────────────────────
@@ -274,6 +274,50 @@ class TestKBEngineDetailContext(unittest.TestCase):
         ctx = self.e.get_detail_context(cmds, n=1)
         # Only 1 rule's detail should appear
         self.assertEqual(ctx.count("[DANGER]") + ctx.count("[UPGRADE]") + ctx.count("[TIP]"), 1)
+
+
+class TestTokenExtractionAndNormalization(unittest.TestCase):
+    """Verify robust extraction and normalization across prefixes and wrappers."""
+
+    def test_basic_token_and_tail(self):
+        tok, tail = extract_command_token_and_tail("git push --force origin main")
+        self.assertEqual(tok, "git")
+        self.assertEqual(tail, "git push --force origin main")
+
+    def test_sudo_with_options(self):
+        tok, tail = extract_command_token_and_tail("sudo -u admin /usr/bin/git status")
+        self.assertEqual(tok, "git")
+        self.assertEqual(tail, "git status")
+
+    def test_sudo_with_preserve_env(self):
+        tok, tail = extract_command_token_and_tail("sudo -E /usr/local/bin/docker ps")
+        self.assertEqual(tok, "docker")
+        self.assertEqual(tail, "docker ps")
+
+    def test_multiple_env_prefixes(self):
+        tok, tail = extract_command_token_and_tail("CUDA_VISIBLE_DEVICES=0 TOKEN=xyz python train.py")
+        self.assertEqual(tok, "python")
+        self.assertEqual(tail, "python train.py")
+
+    def test_quoted_command(self):
+        tok, tail = extract_command_token_and_tail('"git" commit -m "wip"')
+        self.assertEqual(tok, "git")
+        self.assertEqual(tail, 'git commit -m "wip"')
+
+    def test_empty_or_whitespace(self):
+        self.assertEqual(extract_command_token_and_tail(""), ("", ""))
+        self.assertEqual(extract_command_token_and_tail("   "), ("", ""))
+
+    def test_scan_anchored_rule_with_sudo(self):
+        # In SAMPLE_KB, git-001 has anchored pattern ^git\s+push\s+--force
+        e = _make_kb()
+        m = e.scan("sudo git push --force origin main")
+        self.assertTrue(any(x["id"] == "git-001" for x in m))
+
+    def test_scan_anchored_rule_with_env_and_path(self):
+        e = _make_kb()
+        m = e.scan("ENV_VAR=1 sudo -u admin /usr/bin/git push --force origin main")
+        self.assertTrue(any(x["id"] == "git-001" for x in m))
 
 
 if __name__ == "__main__":

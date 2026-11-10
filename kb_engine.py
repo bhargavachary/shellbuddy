@@ -8,11 +8,12 @@ Drop-in replacement for the flat UPGRADE_RULES list in hint_daemon.py.
 """
 
 import json
+import os
 import re
 import time
 from pathlib import Path
 from collections import defaultdict
-from typing import Optional
+from typing import Optional, Tuple
 
 KB_PATH     = Path(__file__).parent / "kb.json"
 INSTALL_KB  = Path.home() / ".shellbuddy" / "kb.json"
@@ -24,6 +25,54 @@ SEVERITY_PREFIX = {
     "tip":     "-> ",
     "upgrade": "=> ",
 }
+
+
+def extract_command_token_and_tail(cmd: str) -> Tuple[str, str]:
+    """
+    Extract the primary command executable token and normalized tail from a shell command.
+    Handles:
+      - path prefixes: /usr/bin/git -> ('git', 'git ...')
+      - quotes: "git" or 'docker' -> ('git', 'git ...')
+      - multiple environment variables: FOO=1 BAR=2 git -> ('git', 'git ...')
+      - sudo/doas wrappers and options: sudo -u root git -> ('git', 'git ...')
+    """
+    if not cmd:
+        return "", ""
+    parts = cmd.strip().split()
+    if not parts:
+        return "", ""
+
+    idx = 0
+    # Skip environment variable assignments (e.g. KEY=VAL)
+    while idx < len(parts) and "=" in parts[idx] and not parts[idx].startswith("-"):
+        idx += 1
+
+    if idx >= len(parts):
+        return "", ""
+
+    # Check for wrapper commands: sudo, doas, env
+    wrapper = parts[idx].strip("\"'").lower()
+    if wrapper in ("sudo", "doas", "env"):
+        idx += 1
+        # Skip options/flags passed to the wrapper
+        while idx < len(parts):
+            token = parts[idx]
+            if token in ("-u", "-g", "-C", "--user", "--group") and idx + 1 < len(parts):
+                idx += 2
+            elif token.startswith("-"):
+                idx += 1
+            elif "=" in token:
+                idx += 1
+            else:
+                break
+
+    if idx < len(parts):
+        raw_token = parts[idx].strip("\"'")
+        base_name = Path(raw_token).name.lower()
+        tail = " ".join([base_name] + parts[idx + 1:])
+        return base_name, tail
+
+    return "", ""
 
 
 class KBEngine:
@@ -48,7 +97,7 @@ class KBEngine:
         self._count    = 0
         self._load_time = 0.0
 
-        path = kb_path or (INSTALL_KB if INSTALL_KB.exists() else KB_PATH)
+        path = kb_path or os.environ.get("SHELLBUDDY_KB") or (KB_PATH if KB_PATH.exists() else (INSTALL_KB if INSTALL_KB.exists() else None))
         if path and Path(path).exists():
             self.load(path)
 
@@ -100,22 +149,11 @@ class KBEngine:
         if not cmd:
             return []
 
-        first_token = cmd.split()[0].lower()
-        # Handle 'sudo git ...' → use second token
-        if first_token == "sudo" and len(cmd.split()) > 1:
-            first_token = cmd.split()[1].lower()
-        # Handle env var prefix: 'CUDA_VISIBLE_DEVICES=0 python ...'
-        if "=" in first_token:
-            parts = cmd.split()
-            for p in parts:
-                if "=" not in p:
-                    first_token = p.lower()
-                    break
-
-        candidates = self._buckets.get(first_token, []) + self._generic
+        token, stripped = extract_command_token_and_tail(cmd)
+        candidates = self._buckets.get(token, []) + self._generic
         matches = []
         for compiled, entry in candidates:
-            if compiled.search(cmd):
+            if compiled.search(cmd) or (stripped and compiled.search(stripped)):
                 matches.append(entry)
         return matches
 

@@ -78,15 +78,55 @@ ENABLE_POST_MORTEM = True  # auto-draft commit messages on git commit
 ENABLE_IDLE_TIPS   = True  # show /tip usage tips during idle periods
 
 
+# ── Secret Scrubbing & Sensitive Command Filtering ───────────────────────────
+SENSITIVE_PATTERNS = [
+    (re.compile(r'(?i)\b(bearer\s+)[A-Za-z0-9_\-\.]{8,}'), r'\1[REDACTED]'),
+    (re.compile(r'\b(ghp_[a-zA-Z0-9]{10,}|github_pat_[a-zA-Z0-9_]{10,})\b'), r'[REDACTED]'),
+    (re.compile(r'\b(sk-[a-zA-Z0-9_-]{10,})\b'), r'[REDACTED]'),
+    (re.compile(r'\b(AKIA[0-9A-Z]{16})\b'), r'[REDACTED]'),
+    (re.compile(r'(?i)(export\s+[A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTH)[A-Za-z0-9_]*=)([^\s]+)'), r'\1[REDACTED]'),
+    (re.compile(r'(?i)(-p\s+|--password[\s=]+)([^\s]+)'), r'\1[REDACTED]'),
+    (re.compile(r'(?i)(access_token=|token=|api_key=|secret=)([^\s&]+)'), r'\1[REDACTED]'),
+    (re.compile(r'ssh-add\s+~?/\S*id_[a-zA-Z0-9_]+'), r'ssh-add [REDACTED]'),
+    (re.compile(r'echo\s+[^\s|]+\s*\|\s*sudo\s+-S'), r'echo [REDACTED] | sudo -S'),
+]
+
+def scrub_command(cmd: str) -> str:
+    """Scrub sensitive credentials, passwords, tokens, and keys from command string."""
+    if not cmd:
+        return ""
+    res = cmd
+    for pat, repl in SENSITIVE_PATTERNS:
+        res = pat.sub(repl, res)
+    return res
+
+def is_sensitive_command(cmd: str) -> bool:
+    """Return True if command appears to contain credentials, secrets, or sensitive tokens."""
+    if not cmd:
+        return False
+    cmd_l = cmd.lower()
+    keywords = [
+        "api_key", "secret", "password", "access_token", "bearer ",
+        "id_rsa", "ssh-add ", "ghp_", "aws_access_key", "aws_secret",
+        "token=", "token:", "token ", "auth_token", "private_key", "sk-"
+    ]
+    if any(k in cmd_l for k in keywords):
+        return True
+    return any(pat.search(cmd) for pat, _ in SENSITIVE_PATTERNS)
+
+
 def _parse_jsonl_lines(lines):
-    """Parse a list of raw JSONL strings, silently skipping malformed lines."""
+    """Parse a list of raw JSONL strings, silently skipping malformed lines and scrubbing sensitive data."""
     out = []
     for l in lines:
         l = l.strip()
         if not l:
             continue
         try:
-            out.append(json.loads(l))
+            item = json.loads(l)
+            if isinstance(item, dict) and "cmd" in item:
+                item["cmd"] = scrub_command(item["cmd"])
+            out.append(item)
         except Exception:
             pass
     return out
@@ -742,7 +782,8 @@ _ctx_lock = threading.Lock()
 
 
 def _sanitize_for_ctx(text: str, max_len: int = 300) -> str:
-    """Strip newlines/control chars and truncate for safe JSONL embedding."""
+    """Strip newlines/control chars, scrub secrets, and truncate for safe JSONL embedding."""
+    text = scrub_command(text)
     text = re.sub(r'[\x00-\x1f\x7f]+', ' ', text)  # control chars → space
     text = text.strip()[:max_len]
     json.dumps(text)  # validate it round-trips cleanly (raises on bad encoding)

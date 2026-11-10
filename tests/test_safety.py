@@ -40,24 +40,28 @@ class TestSecretScrubbing(unittest.TestCase):
         "ls -la",
     ]
 
-    def _should_filter(self, cmd: str) -> bool:
-        cmd_l = cmd.lower()
-        patterns = [
-            "secret", "password", "access_token", "bearer ",
-            "id_rsa", "ssh-add ", "ghp_", "aws_access_key", "aws_secret",
-            "api_key", "token="
-        ]
-        return any(p in cmd_l for p in patterns)
-
     def test_all_sensitive_commands_flagged(self):
         for cmd in self.SECRET_COMMANDS:
             with self.subTest(cmd=cmd):
-                self.assertTrue(self._should_filter(cmd), f"Failed to filter secret: {cmd}")
+                self.assertTrue(hd.is_sensitive_command(cmd), f"Failed to filter secret: {cmd}")
 
     def test_safe_commands_allowed(self):
         for cmd in self.SAFE_COMMANDS:
             with self.subTest(cmd=cmd):
-                self.assertFalse(self._should_filter(cmd), f"Wrongly filtered safe command: {cmd}")
+                self.assertFalse(hd.is_sensitive_command(cmd), f"Wrongly filtered safe command: {cmd}")
+
+    def test_scrub_command_replaces_tokens_with_redacted(self):
+        for cmd in self.SECRET_COMMANDS:
+            with self.subTest(cmd=cmd):
+                scrubbed = hd.scrub_command(cmd)
+                self.assertNotIn("eyJhbGciOi...", scrubbed)
+                self.assertNotIn("ghp_ABC1234567890", scrubbed)
+                self.assertNotIn("wJalrXUtnFEMI/K7MDENG/bPxRfiCY", scrubbed)
+                self.assertNotIn("sk-proj-12345", scrubbed)
+                self.assertNotIn("my_secret_password", scrubbed)
+                self.assertNotIn("my_secret_token", scrubbed)
+                self.assertNotIn("xyz987", scrubbed)
+                self.assertIn("[REDACTED]", scrubbed)
 
 
 class TestDestructiveOperationSafeguards(unittest.TestCase):
@@ -77,6 +81,18 @@ class TestDestructiveOperationSafeguards(unittest.TestCase):
 
     def test_rm_rf_flagged(self):
         matches = self.engine.scan("rm -rf /")
+        self.assertTrue(any(m["severity"] == "danger" for m in matches))
+
+    def test_sudo_force_push_flagged_danger(self):
+        matches = self.engine.scan("sudo git push --force origin main")
+        self.assertTrue(any(m["severity"] == "danger" for m in matches))
+
+    def test_sudo_flags_and_path_chmod_flagged_danger(self):
+        matches = self.engine.scan("sudo -u admin /bin/chmod 777 /var/www")
+        self.assertTrue(any(m["severity"] == "danger" for m in matches))
+
+    def test_env_prefix_rm_rf_flagged_danger(self):
+        matches = self.engine.scan("FORCE=1 sudo rm -rf /")
         self.assertTrue(any(m["severity"] == "danger" for m in matches))
 
 

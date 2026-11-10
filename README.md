@@ -3,7 +3,7 @@
 > **Ambient, multi-layer terminal companion for modern developers.**  
 > Real-time system vitals, instant sub-millisecond safety rules, and context-aware LLM suggestions inside `tmux` without disrupting your shell workflow.
 
-[![Tests](https://img.shields.io/badge/tests-139%20passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-151%20passed-brightgreen.svg)](tests/)
 [![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue.svg)](requirements.txt)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)](SETUP.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -107,7 +107,9 @@ ShellBuddy is engineered around strict security constraints:
 
 1. **Read-Only Interception:** Commands are recorded via a `zsh` `preexec` hook. ShellBuddy does not wrap or proxy shell execution.
 2. **No Autonomous Execution:** ShellBuddy never runs suggested commands. All output is displayed in status panes or printed to standard output for user review.
-3. **Strict Secret Masking:** `scripts/log_cmd.sh` discards commands containing passwords, tokens, API keys (`api_key`, `secret`, `password`, `bearer`, `access_token`, `ghp_`, `id_rsa`, `aws_access_key`, `export *key=`, etc.).
+3. **Multi-Layer Secret Masking:**
+   - **Shell Hook Filtering:** `scripts/log_cmd.sh` discards commands containing passwords, tokens, API keys (`api_key`, `secret`, `password`, `bearer`, `access_token`, `ghp_`, `id_rsa`, `aws_access_key`, `export *key=`, etc.) before writing to disk.
+   - **Daemon-Level Scrubbing:** `scripts/hint_daemon.py` applies automated token redacting (`scrub_command()`) across all ingested commands and prompts to guarantee no sensitive credentials leak into local logs or external LLM connections.
 4. **Offline Capability:** If no LLM backend is configured or network is unavailable, Layer 1a (KB Engine) operates entirely offline with 100% functionality.
 
 ---
@@ -162,7 +164,7 @@ python3 scripts/demo.py
 ### Developer Commands (`Makefile`)
 
 ```bash
-make test      # Run full 139-test suite
+make test      # Run full 151-test suite
 make lint      # Syntax-check all Python modules
 make demo      # Run standalone KB dispatch engine demo and micro-benchmark
 make dist      # Build distribution archive
@@ -178,13 +180,11 @@ make dist      # Build distribution archive
 
 ---
 
-## 9. Contributing & Reporting Issues
+## 9. Contributing & Security
 
-Contributions are welcome! Please adhere to the following workflow:
-1. Fork the repository and create a feature branch (`git checkout -b feat/my-rule`).
-2. If adding KB rules, edit the source definitions and run `make build-kb` (do not hand-edit `kb.json`).
-3. Ensure all tests pass: `make test && make lint`.
-4. Open a Pull Request with a clear description and sample commands tested.
+- **Contributing:** Please read our [Contributing Guide](CONTRIBUTING.md) for details on development workflow, test requirements, and KB rule management.
+- **Security Policy:** Review our [Security Policy](SECURITY.md) for vulnerability disclosure guidelines and defense-in-depth architecture.
+- **Changelog:** See [CHANGELOG.md](CHANGELOG.md) for release history and recent updates.
 
 ---
 
